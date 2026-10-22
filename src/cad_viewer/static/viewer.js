@@ -25,6 +25,9 @@ let catalogRequest = null;
 let catalogVersion = 0;
 let retryScene = null;
 let graphicsLost = false;
+let geometryReference = null;
+let referenceKey = null;
+let modelUnits = null;
 const safeGraphics = new URLSearchParams(location.search).get("graphics") === "safe"
     || (/AppleWebKit/.test(navigator.userAgent) && !/Chrome|Chromium|Edg\/|OPR\/|Android/.test(navigator.userAgent));
 
@@ -42,6 +45,82 @@ function visitShapes(shape, callback) {
     callback(shape);
     for (const child of shape.parts || []) visitShapes(child, callback);
 }
+
+// Snapshot only serializable data: upstream picked objects retain the renderer.
+function captureReference() {
+    if (rendering || surface.dataset.modelReady !== "true") return;
+    const picked = cadViewer?.lastObject;
+    if (!picked?.backendId) return;
+    const camera = cadViewer.getCameraLocationSettings();
+    const key = JSON.stringify([picked.backendId, camera]);
+    if (key === referenceKey) return;
+    referenceKey = key;
+    const geometry = cadViewer.rendered.nestedGroup.meshGeometry.resolve(picked.backendId);
+    const positions = geometry?.positions;
+    let bounds = null;
+    if (positions?.length >= 3) {
+        const min = [Infinity, Infinity, Infinity], max = [-Infinity, -Infinity, -Infinity];
+        for (let i = 0; i < positions.length; i++) {
+            min[i % 3] = Math.min(min[i % 3], positions[i]);
+            max[i % 3] = Math.max(max[i % 3], positions[i]);
+        }
+        bounds = { min, max };
+    }
+    geometryReference = {
+        schema: "cad-geometry-reference/v1",
+        viewer_url: location.href,
+        project: activeAsset?.project || null,
+        file: activeAsset?.file || null,
+        revision: activeAsset?.revision || activeBuild,
+        build_id: activeBuild,
+        units: modelUnits || "unspecified model units",
+        geometry_path: picked.backendId,
+        component: owner(picked.backendId),
+        topology: picked.asSolid ? "solid" : picked.topo,
+        geometry_type: geometry?.geomType ?? null,
+        hover_measurement: cadViewer.display.statusLine.textContent,
+        world_bounds: bounds,
+        edge_endpoints: picked.topo === "edge" && !picked.asSolid && positions?.length >= 6
+            ? [Array.from(positions.slice(0, 3)), Array.from(positions.slice(-3))] : null,
+        camera,
+    };
+    element("copy-reference").disabled = false;
+    text("reference-status", `Captured ${geometryReference.topology}: ${picked.backendId}`);
+}
+
+async function copyReference() {
+    captureReference();
+    if (!geometryReference) return;
+    const capturedRevision = revision;
+    const value = "CAD geometry reference\n" + JSON.stringify(geometryReference, null, 2)
+        + "\nGeometry paths identify this displayed revision only; they may change after rebuilding. "
+        + "Coordinates and measurements describe the displayed tessellation (including view transforms), not exact B-rep geometry. "
+        + "The viewer URL opens the file but does not restore this selection or guarantee the same revision.\n"
+        + "Requested change: [describe what should improve and what must stay unchanged]";
+    const fallback = element("reference-text");
+    fallback.value = value;
+    try {
+        await navigator.clipboard.writeText(value);
+        if (revision !== capturedRevision) return;
+        fallback.hidden = true;
+        text("reference-status", "Reference copied. Paste it into your agent chat and describe the change.");
+    } catch {
+        if (revision !== capturedRevision) return;
+        fallback.hidden = false;
+        fallback.focus();
+        fallback.select();
+        text("reference-status", "Clipboard unavailable. Copy the selected reference below.");
+    }
+}
+
+element("copy-reference").addEventListener("click", copyReference);
+window.addEventListener("keydown", (event) => {
+    if (!event.altKey || event.ctrlKey || event.metaKey || event.shiftKey || event.code !== "KeyC"
+        || event.repeat || event.target.closest?.("input, textarea, select, [contenteditable]")) return;
+    if (!cadViewer?.lastObject || surface.dataset.modelReady !== "true") return;
+    event.preventDefault();
+    void copyReference();
+});
 
 function displayedBuild(message) {
     const ids = new Set();
@@ -194,6 +273,7 @@ async function loadPrintFiles(build, expectedRevision) {
         if (metadata.build_id !== build || !Array.isArray(metadata.parts)) {
             throw new Error("The print files do not match the displayed build.");
         }
+        modelUnits = metadata.units || modelUnits;
         parts = new Map(metadata.parts.map((part) => [part.name, part]));
         renderParts();
         optionalText("build-status", metadata.status);
@@ -208,6 +288,13 @@ async function loadPrintFiles(build, expectedRevision) {
 
 function resetModel(message, metadata = null) {
     revision += 1;
+    geometryReference = null;
+    referenceKey = null;
+    modelUnits = metadata?.units || message?.data?.units || null;
+    element("copy-reference").disabled = true;
+    element("reference-text").hidden = true;
+    element("reference-text").value = "";
+    text("reference-status", "Hover an edge, face, or solid to capture a reference.");
     request?.abort();
     parts = new Map();
     selectedPaths = [];
@@ -229,6 +316,7 @@ function resetModel(message, metadata = null) {
         ? "This model has no Cyclone build attached. Print files appear when a saved build is loaded."
         : "Waiting for a model from the CAD workspace.");
     if (metadata) {
+        modelUnits = metadata.units || modelUnits;
         parts = new Map(metadata.parts.map((part) => [part.name, part]));
         renderParts();
         optionalText("build-status", metadata.status);
@@ -281,7 +369,50 @@ function defaultFile(project) {
 
 const expandedBuildGroups = new Set();
 
+let workingTreeRequest = null;
+let workingTreeProject = null;
+
+async function refreshWorkingTree() {
+    workingTreeRequest?.abort();
+    const projectId = currentProject?.id;
+    const badge = element("working-tree-status");
+    badge.hidden = !projectId;
+    if (!projectId) {
+        workingTreeProject = null;
+        return;
+    }
+    if (workingTreeProject !== projectId) {
+        badge.textContent = "Checking working tree…";
+        badge.dataset.state = "checking";
+    }
+    workingTreeProject = projectId;
+    const request = new AbortController();
+    workingTreeRequest = request;
+    let state = "unavailable";
+    try {
+        const response = await fetch(`/api/projects/${encodeURIComponent(projectId)}/working-tree`,
+            { signal: request.signal });
+        if (!response.ok) throw new Error("Status unavailable");
+        state = (await response.json()).state;
+    } catch (error) {
+        if (error.name === "AbortError") return;
+    }
+    if (workingTreeRequest !== request || currentProject?.id !== projectId) return;
+    badge.dataset.state = state;
+    badge.textContent = state === "dirty" ? "Uncommitted changes"
+        : state === "clean" ? "No uncommitted changes" : "Working tree status unavailable";
+    badge.title = "Current project files, including staged and untracked changes. Refreshed every 5 seconds; independent of the displayed build.";
+}
+
+setInterval(() => {
+    if (catalogMode && !document.hidden) void refreshWorkingTree();
+}, 5000);
+window.addEventListener("focus", () => {
+    if (catalogMode) void refreshWorkingTree();
+});
+
 function renderFiles() {
+    void refreshWorkingTree();
     const list = element("files-list");
     const query = element("file-search").value.trim().toLocaleLowerCase();
     const allFiles = currentProject?.files || [];
@@ -580,6 +711,11 @@ class EmbeddedViewer extends Viewer {
             resetModel(null);
             showGraphicsFailure();
         }, true);
+        const hover = this.pickingController.handleHover.bind(this.pickingController);
+        this.pickingController.handleHover = () => {
+            hover();
+            captureReference();
+        };
         const pick = this.handlePick;
         this.handlePick = (path, name, meta, shift, ...rest) => {
             pick(path, name, meta, shift, ...rest);

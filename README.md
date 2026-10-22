@@ -59,3 +59,20 @@ The extracted environment retains the existing dependency versions: Python 3.12,
 ## Existing deployment
 
 Cyclone's existing viewer commands delegate to this application for compatibility. Existing service launchers need to reference the new `projects/cyclone` or `cad-tooling` paths. This extraction does not change NixOS, nginx, authentication, or the public listener configuration.
+
+### Sharing geometry with an agent
+
+Hover an edge, face, or solid and press **Alt+C**, or move to **Copy reference**
+in the Agent reference panel to copy the last hovered item. Paste the reference
+into your agent chat and describe the requested change, for example:
+“Please simplify the geometry around this edge while preserving the outer
+dimensions and mounting holes.” A screenshot alongside the reference helps
+communicate the intended region.
+
+The reference includes the displayed file/revision, geometry path, tessellated
+world bounds, edge endpoints when available, hover measurements, and camera.
+Paths apply only to that revision; they are not persistent IDs across rebuilds
+or source-code locations. Coordinates reflect display transforms, including
+exploded or scaled views. The URL opens the file, not the captured selection or
+camera, and the file may have changed since capture. The reference is cleared
+when the model changes. If clipboard access fails, copy from the text box shown.

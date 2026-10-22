@@ -19,6 +19,7 @@
         <div class="project-controls">
           <label class="eyebrow" for="project-select">PROJECT</label>
           <select id="project-select" disabled><option value="">Loading projects…</option></select>
+          <p id="working-tree-status" class="working-tree-status muted" role="status" hidden></p>
           <label class="eyebrow files-label" for="file-search">FILES & CONFIGURATIONS</label>
           <input id="file-search" type="search" placeholder="Find a file…" autocomplete="off" disabled>
           <div class="file-summary"><p id="file-count" class="muted" role="status"></p><button id="refresh-projects" class="retry" type="button" disabled>Refresh</button></div>
@@ -42,6 +43,13 @@
         <p id="viewer-error" class="error" role="alert" hidden></p>
       </section>
       <aside class="print-panel" aria-label="Component print files">
+        <section class="geometry-reference" aria-label="Agent reference">
+          <p class="eyebrow">AGENT REFERENCE</p>
+          <button id="copy-reference" class="retry" type="button" disabled>Copy reference</button>
+          <p class="muted">Hover geometry and press Alt+C, or use this button to copy the last hovered item. Paste into your agent chat with the change you want.</p>
+          <p id="reference-status" role="status">Hover an edge, face, or solid to capture a reference.</p>
+          <textarea id="reference-text" aria-label="Geometry reference to copy" readonly hidden></textarea>
+        </section>
         <section class="selection" aria-labelledby="selected-component">
           <p class="eyebrow">PRINT FILES</p>
           <h2 id="selected-component">Select a component</h2>

@@ -5,6 +5,7 @@ import json
 import os
 from pathlib import Path
 import re
+import subprocess
 from threading import RLock
 
 
@@ -126,6 +127,7 @@ class ProjectCatalog:
         self._entries = {}
         self._revisions = {}
         self._project_names = {}
+        self._project_roots = {}
         self._defaults = {}
         self._lock = RLock()
 
@@ -166,6 +168,24 @@ class ProjectCatalog:
                 entry = pinned
             return entry
 
+    def working_tree(self, project_id):
+        """Read current changes independently of saved build provenance."""
+        with self._lock:
+            if project_id not in self._project_names:
+                self._scan()
+            if project_id not in self._project_names:
+                raise FileNotFoundError('Unknown project')
+            root = self._project_roots[project_id]
+        try:
+            result = subprocess.run(
+                ['git', '-C', str(root), 'status', '--porcelain=v1', '-z',
+                 '--untracked-files=normal', '--ignore-submodules=none', '--', '.'],
+                capture_output=True, timeout=5, check=True,
+            )
+        except (OSError, subprocess.SubprocessError):
+            return {'state': 'unavailable'}
+        return {'state': 'dirty' if result.stdout else 'clean'}
+
     def download(self, project_id, file_id, revision, format):
         if not revision or format != 'stl':
             raise FileNotFoundError('Unknown download')
@@ -178,6 +198,7 @@ class ProjectCatalog:
         self._revisions[(*key, entry.revision)] = entry
 
     def _scan(self):
+        self._project_roots = {}
         self._entries = {}
         self._revisions = {}
         self._project_names = {}
@@ -201,6 +222,7 @@ class ProjectCatalog:
                 has_metadata = False
             if not (has_metadata or has_output):
                 continue
+            self._project_roots[project_id] = boundary
             self._project_names.setdefault(project_id, project.name.replace('_', ' ').title())
             if project_id != 'cyclone':
                 for entry in self._exports(project, project_id):
@@ -239,6 +261,7 @@ class ProjectCatalog:
                                      status=metadata['status'], units=metadata['units'])
                 self._record(entry)
                 self._project_names['cyclone'] = 'Cyclone'
+                self._project_roots['cyclone'] = project_root
                 if path.resolve() == default_path:
                     self._defaults['cyclone'] = entry.id
             except (OSError, ValueError, KeyError, TypeError):

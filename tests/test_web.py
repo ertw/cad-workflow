@@ -125,3 +125,39 @@ def test_manifest_symlink_escape_is_rejected(builds, tmp_path):
     manifest.unlink()
     manifest.symlink_to(outside)
     assert request(files, '/api/builds/' + identifiers[0]).status_code == 404
+
+
+def test_current_project_working_tree(tmp_path):
+    import subprocess
+    from cad_viewer.catalog import ProjectCatalog
+
+    project = tmp_path / 'example'
+    project.mkdir()
+    (project / 'pyproject.toml').write_text('')
+    files = BuildFiles(tmp_path / 'absent')
+    catalog = ProjectCatalog(tmp_path, files)
+
+    def status(project_id='example'):
+        return respond(None, SimpleNamespace(
+            path=f'/api/projects/{project_id}/working-tree', headers=Headers()), files, catalog)
+
+    def git(*args):
+        subprocess.run(['git', '-C', str(project), *args], check=True, capture_output=True)
+
+    assert json.loads(status().body)['state'] == 'unavailable'
+    assert status('unknown').status_code == 404
+    git('init')
+    assert json.loads(status().body)['state'] == 'dirty'  # untracked
+    git('add', '.')
+    assert json.loads(status().body)['state'] == 'dirty'  # staged, unborn HEAD
+    git('-c', 'user.name=Test', '-c', 'user.email=test@example.com', 'commit', '-m', 'Initial')
+    assert json.loads(status().body)['state'] == 'clean'
+    (project / 'pyproject.toml').write_text('# modified')
+    assert json.loads(status().body)['state'] == 'dirty'
+    git('checkout', '--', 'pyproject.toml')
+    (project / '.git/info/exclude').write_text('ignored\n')
+    (project / 'ignored').write_text('ignored')
+    assert json.loads(status().body)['state'] == 'clean'
+    (project / 'pyproject.toml').unlink()
+    assert json.loads(status().body)['state'] == 'dirty'
+    assert status().headers['Cache-Control'] == 'no-store'

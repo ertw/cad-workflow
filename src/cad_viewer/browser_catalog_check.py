@@ -60,6 +60,31 @@ def run(port=3940, safe_graphics=False):
                     assert page.evaluate('cadViewer.renderer.getContext().getContextAttributes().antialias') is False
                 assert page.locator('#cad_viewer canvas').first.is_visible()
                 assert page.locator('#selected-component').inner_text() == 'module.stl'
+                # Capture an actual GPU-picked face, retaining it when moving to the button.
+                context.grant_permissions(['clipboard-read', 'clipboard-write'])
+                assert page.locator('#copy-reference').is_disabled()
+                canvas = page.locator('#cad_viewer canvas').first.bounding_box()
+                page.mouse.move(canvas['x'] + canvas['width'] * .55,
+                                canvas['y'] + canvas['height'] * .5)
+                page.wait_for_function('Boolean(cadViewer.lastObject)')
+                page.wait_for_function("!document.querySelector('#copy-reference').disabled")
+                hovered = page.evaluate('cadViewer.lastObject.backendId')
+                page.keyboard.press('Alt+c')
+                page.wait_for_function("document.querySelector('#reference-status').textContent.startsWith('Reference copied')")
+                copied = page.evaluate('navigator.clipboard.readText()')
+                reference = json.loads(copied.split('\n', 1)[1].split('\nGeometry paths', 1)[0])
+                assert reference['geometry_path'] == hovered
+                assert reference['revision'] == first['revision']
+                assert reference['project'] == 'alpha'
+                assert reference['world_bounds'] and reference['camera']
+                page.locator('#copy-reference').click()
+                assert page.evaluate('navigator.clipboard.readText()') == copied
+                # Clipboard denial exposes selectable text instead of losing the reference.
+                page.evaluate("() => { navigator.clipboard.writeText = async () => { throw new Error('denied'); }; }")
+                page.locator('#copy-reference').click()
+                page.locator('#reference-text').wait_for(state='visible')
+                assert page.locator('#reference-text').input_value() == copied
+
                 with page.expect_download() as download:
                     page.locator('#download-stl').click()
                 actual = Path(download.value.path()).read_bytes()
@@ -70,6 +95,8 @@ def run(port=3940, safe_graphics=False):
                 assert page.locator('.file-button').count() == 1
                 page.locator('.file-button').click()
                 ready(page, 'alpha', second['id'])
+                assert page.locator('#copy-reference').is_disabled()
+                assert page.locator('#reference-text').input_value() == ''
                 second_url = page.url
                 page.go_back()
                 ready(page, 'alpha', first['id'])
@@ -160,7 +187,9 @@ def run(port=3940, safe_graphics=False):
                                      'project switching', 'independent tabs', 'rapid selection',
                                      'failure clearing', 'retry', 'unknown link', 'empty project', 'mobile width',
                                      'graphics context loss stops retries', 'commit groups and build order',
-                                     'unlinked builds', 'commit search and selection']}
+                                     'unlinked builds', 'commit search and selection',
+                                     'hover reference shortcut and button', 'clipboard fallback',
+                                     'reference cleared on file change']}
                 (output / 'report.json').write_text(json.dumps(result, indent=2) + '\n')
                 print(json.dumps(result, indent=2))
             except Exception:

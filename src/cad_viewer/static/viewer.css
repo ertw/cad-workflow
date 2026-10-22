@@ -100,3 +100,11 @@ h2 { margin: 0; font-size: 19px; line-height: 1.35; font-weight: 600; letter-spa
 .file-group summary:focus-visible { outline: 2px solid #23785a; }
 
 .commit-message { margin: 0 9px 12px; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 12px; }
+.working-tree-status { margin: 8px 0 0; font-size: 12px; }
+.working-tree-status[data-state="dirty"] { color: #925800; font-weight: 600; }
+.working-tree-status[data-state="clean"] { color: #286440; }
+
+.geometry-reference { padding: 18px 24px; border-bottom: 1px solid #d8e0d9; }
+.geometry-reference p { font-size: 12px; overflow-wrap: anywhere; }
+.geometry-reference textarea { width: 100%; min-height: 180px; }
+.retry:disabled { opacity: .5; cursor: default; }

@@ -108,6 +108,8 @@ def respond(viewer, request, files, catalog=None):
             return _json(catalog.metadata())
         if path.startswith('/api/projects/') and catalog is not None:
             segments = path.strip('/').split('/')
+            if len(segments) == 4 and segments[3] == 'working-tree':
+                return _json(catalog.working_tree(segments[2]))
             if len(segments) < 6 or segments[3] != 'files':
                 raise FileNotFoundError('Unknown project file')
             project, file_id = segments[2], segments[4]
