@@ -1,0 +1,149 @@
+"""Real-browser regression checks for independent project/file previews."""
+import argparse
+import hashlib
+import json
+from pathlib import Path
+import shutil
+from tempfile import TemporaryDirectory
+
+from playwright.sync_api import sync_playwright
+
+from .preview import server
+
+
+def ready(page, project, file):
+    page.wait_for_function("""([project, file]) => {
+        const root = document.querySelector('#cad_viewer');
+        return root.dataset.modelReady === 'true' && root.dataset.projectId === project
+            && root.dataset.fileId === file;
+    }""", arg=[project, file], timeout=60000)
+
+
+def run(port=3940, safe_graphics=False):
+    import trimesh
+    output = Path(__file__).resolve().parents[2] / 'out/browser/catalog-check'
+    output.mkdir(parents=True, exist_ok=True)
+    errors = []
+    graphics_query = '&graphics=safe' if safe_graphics else ''
+    with TemporaryDirectory(prefix='cad-catalog-') as temporary:
+        workspace = Path(temporary)
+        (workspace / 'unfinished').mkdir()
+        (workspace / 'unfinished/pyproject.toml').write_text('[project]\nname = "unfinished"\n')
+        for project, scale in [('alpha', 1), ('beta', 2)]:
+            for index, group in enumerate(['short', 'tall']):
+                path = workspace / project / 'out' / group / 'module.stl'
+                path.parent.mkdir(parents=True)
+                trimesh.creation.box(extents=[10 * scale, 20, 10 * (index + 1)]).export(path)
+                (path.parent / 'build.json').write_text(json.dumps({
+                    'cad_valid': True, 'solids': 1, 'stl_watertight': True,
+                    'stl_winding_consistent': True, 'stl_volume_mm3': 2000 * scale * (index + 1),
+                    'units': 'mm', 'print_orientation': 'Flat base on the print bed.',
+                    'files': {'module.stl': hashlib.sha256(path.read_bytes()).hexdigest()},
+                }))
+        with server(port, workspace=workspace), sync_playwright() as playwright:
+            browser = playwright.chromium.launch(executable_path=shutil.which('chromium'), headless=True,
+                args=['--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader'])
+            context = browser.new_context(viewport={'width': 1440, 'height': 1000})
+            page = context.new_page()
+            page.on('pageerror', lambda error: errors.append(str(error)))
+            base = f'http://127.0.0.1:{port}'
+            catalog = context.request.get(base + '/api/projects').json()
+            projects = {project['id']: project for project in catalog['projects']}
+            assert set(projects) == {'alpha', 'beta', 'unfinished'}, 'Projects escaped the selected workspace'
+            first, second = projects['alpha']['files']
+            beta = projects['beta']['files'][0]
+            try:
+                page.goto(f'{base}/?project=alpha&file={first["id"]}{graphics_query}')
+                ready(page, 'alpha', first['id'])
+                if safe_graphics:
+                    assert page.evaluate('cadViewer.renderer.getPixelRatio()') == 1
+                    assert page.evaluate('cadViewer.renderer.getContext().getContextAttributes().antialias') is False
+                assert page.locator('#cad_viewer canvas').first.is_visible()
+                assert page.locator('#selected-component').inner_text() == 'module.stl'
+                with page.expect_download() as download:
+                    page.locator('#download-stl').click()
+                actual = Path(download.value.path()).read_bytes()
+                original = workspace / 'alpha/out/short/module.stl'
+                assert hashlib.sha256(actual).digest() == hashlib.sha256(original.read_bytes()).digest()
+                assert download.value.suggested_filename == 'module.stl'
+                page.locator('#file-search').fill('tall')
+                assert page.locator('.file-button').count() == 1
+                page.locator('.file-button').click()
+                ready(page, 'alpha', second['id'])
+                second_url = page.url
+                page.go_back()
+                ready(page, 'alpha', first['id'])
+                page.go_forward()
+                ready(page, 'alpha', second['id'])
+                page.reload()
+                ready(page, 'alpha', second['id'])
+                assert page.url == second_url
+                other = context.new_page()
+                other.on('pageerror', lambda error: errors.append(str(error)))
+                other.goto(f'{base}/?project=beta&file={beta["id"]}{graphics_query}')
+                ready(other, 'beta', beta['id'])
+                page.locator('#project-select').select_option('beta')
+                ready(page, 'beta', beta['id'])
+                page.locator('#project-select').select_option('alpha')
+                ready(page, 'alpha', first['id'])
+                ready(other, 'beta', beta['id'])
+                # Rapid consecutive clicks must finish on the last requested file.
+                page.evaluate("""ids => {
+                    document.querySelector(`[data-file-id="${ids[1]}"]`).click();
+                    document.querySelector(`[data-file-id="${ids[0]}"]`).click();
+                }""", [first['id'], second['id']])
+                ready(page, 'alpha', first['id'])
+                page.route('**/scene?*', lambda route: route.fulfill(status=409, body='{}'))
+                page.locator(f'[data-file-id="{second["id"]}"]').click()
+                page.locator('#scene-state[data-state="error"]').wait_for()
+                assert page.locator('#cad_viewer').get_attribute('data-model-ready') == 'false'
+                assert page.locator('#download-stl').is_hidden()
+                assert not page.locator('#download-stl').get_attribute('href')
+                page.unroute('**/scene?*')
+                page.locator('#retry-scene').click()
+                ready(page, 'alpha', second['id'])
+                page.goto(f'{base}/?project=alpha&file=missing{graphics_query}')
+                page.get_by_text('File not found', exact=True).wait_for()
+                assert page.locator('#download-stl').is_hidden()
+                page.locator(f'[data-file-id="{first["id"]}"]').click()
+                ready(page, 'alpha', first['id'])
+                page.locator('#project-select').select_option('unfinished')
+                page.get_by_text('No files yet', exact=True).wait_for()
+                assert page.locator('#download-stl').is_hidden()
+                assert page.locator('#cad_viewer').get_attribute('data-model-ready') == 'false'
+                page.locator('#project-select').select_option('alpha')
+                ready(page, 'alpha', first['id'])
+                page.screenshot(path=str(output / 'desktop.png'))
+                page.set_viewport_size({'width': 390, 'height': 844})
+                page.screenshot(path=str(output / 'mobile.png'), full_page=True)
+                assert page.evaluate('document.documentElement.scrollWidth <= innerWidth')
+                page.evaluate("cadViewer.renderer.getContext().getExtension('WEBGL_lose_context').loseContext()")
+                page.get_by_text('3D graphics stopped', exact=True).wait_for()
+                assert page.locator('#cad_viewer').get_attribute('data-model-ready') == 'false'
+                assert page.locator('#download-stl').is_hidden()
+                page.locator(f'[data-file-id="{second["id"]}"]').click()
+                assert page.locator('#scene-state-title').inner_text() == '3D graphics stopped'
+                assert not errors, errors
+                result = {'passed': True, 'browser': browser.version, 'page_errors': errors,
+                          'safe_graphics': safe_graphics,
+                          'checks': ['export download bytes', 'group search', 'history', 'reload',
+                                     'project switching', 'independent tabs', 'rapid selection',
+                                     'failure clearing', 'retry', 'unknown link', 'empty project', 'mobile width',
+                                     'graphics context loss stops retries']}
+                (output / 'report.json').write_text(json.dumps(result, indent=2) + '\n')
+                print(json.dumps(result, indent=2))
+            except Exception:
+                page.screenshot(path=str(output / 'failure.png'), full_page=True)
+                (output / 'failure.txt').write_text(page.locator('body').inner_text() + '\n' + str(errors))
+                raise
+            finally:
+                browser.close()
+    return output
+
+
+if __name__ == '__main__':
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--port', type=int, default=3940)
+    parser.add_argument('--safe-graphics', action='store_true')
+    args = parser.parse_args()
+    run(args.port, args.safe_graphics)

@@ -1,0 +1,97 @@
+:root { color-scheme: light; font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; color: #233632; background: #f3f5f2; }
+body { margin: 0; }
+.app-header, .workspace, .print-panel, .selection, .parts, .model-panel, .project-panel { box-sizing: border-box; }
+[hidden] { display: none !important; }
+.app-header { display: flex; align-items: center; justify-content: space-between; gap: 24px; min-height: 100px; padding: 22px 28px; border-bottom: 1px solid #d8e0d9; background: #fbfcf9; }
+.eyebrow { display: block; margin: 0 0 8px; color: #5c7068; font-size: 10px; font-weight: 750; letter-spacing: .15em; }
+h1 { margin: 0; font-size: clamp(18px, 1.7vw, 26px); font-weight: 600; letter-spacing: -.035em; }
+.build { min-width: 0; text-align: right; }
+.build code { display: block; max-width: 350px; overflow-wrap: anywhere; font-size: 11px; color: #63766e; }
+.workspace { display: grid; grid-template-columns: minmax(0, 1fr) 330px; height: calc(100dvh - 100px); min-height: 550px; }
+.workspace.catalog-mode { grid-template-columns: 240px minmax(0, 1fr) 290px; }
+.project-panel { display: flex; flex-direction: column; min-height: 0; background: #fbfcf9; border-right: 1px solid #d8e0d9; }
+.project-controls { padding: 24px 18px 0; }
+.project-controls select, .project-controls input { box-sizing: border-box; width: 100%; min-height: 39px; border: 1px solid #cbd6cf; border-radius: 5px; padding: 8px 10px; background: #fff; color: #233632; font: inherit; font-size: 13px; }
+.project-controls select:focus-visible, .project-controls input:focus-visible, .file-button:focus-visible { outline: 3px solid #609982; outline-offset: 2px; }
+.files-label { margin-top: 24px; }
+.previous-designs { display: flex; align-items: center; gap: 7px; margin-top: 12px; color: #63766e; font-size: 11px; }
+.project-controls .previous-designs input { width: 15px; min-height: 15px; margin: 0; }
+#file-count { margin: 9px 0; }
+.file-summary { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.file-summary .retry { font-size: 11px; }
+.retry:disabled { color: #8a968f; cursor: default; }
+.files-list { overflow: auto; padding: 0 10px 18px; scrollbar-gutter: stable; }
+.file-group { margin: 0 0 15px; }
+.file-group h3 { margin: 14px 9px 7px; color: #6e7e74; font-size: 10px; letter-spacing: .06em; text-transform: uppercase; overflow-wrap: anywhere; }
+.file-group ul { list-style: none; padding: 0; margin: 0; display: grid; gap: 3px; }
+.file-button { display: block; width: 100%; padding: 10px 9px; border: 1px solid transparent; border-radius: 5px; background: transparent; color: #3f594c; text-align: left; font: inherit; cursor: pointer; }
+.file-button:hover { background: #edf2eb; }
+.file-button[aria-current="true"] { border-color: #bfd3bd; background: #e5eee4; color: #234a35; }
+.file-name { display: block; font-size: 12px; font-weight: 600; overflow-wrap: anywhere; }
+.file-kind { display: block; margin-top: 3px; font-size: 10px; color: #748278; }
+.project-status { padding: 0 19px; margin: 10px 0 20px; }
+.model-panel { position: relative; display: flex; flex-direction: column; min-width: 0; min-height: 0; background: #fff; }
+.file-heading { padding: 16px 22px; border-bottom: 1px solid #e5ebe6; }
+.file-heading .eyebrow { margin-bottom: 4px; overflow-wrap: anywhere; }
+.file-heading h2 { font-size: 15px; }
+.viewer-scroll { position: relative; isolation: isolate; flex: 1; min-height: 0; overflow: auto; }
+/* Keep WebGL visible during initialization; the overlay covers it without
+   suppressing canvas presentation in WebKit. Bound viewer toolbar stacking. */
+#cad_viewer { position: relative; z-index: 0; width: 100%; height: 100%; min-width: 450px; min-height: 440px; }
+.scene-state { position: absolute; inset: 0; z-index: 5; display: grid; place-items: center; background: #fff; padding: 24px; }
+.scene-state-card { max-width: 340px; text-align: center; }
+#scene-state-title { margin: 0 0 10px; font-size: 17px; font-weight: 600; }
+#scene-state-detail { margin: 0; font-size: 12px; overflow-wrap: anywhere; }
+.scene-state[data-state="error"] #scene-state-title { color: #a1382f; }
+.scene-state[data-state="loading"] #scene-state-title::before { content: ""; display: block; width: 22px; height: 22px; margin: 0 auto 20px; border: 2px solid #d8e0d9; border-top-color: #245e48; border-radius: 50%; animation: loading 1s linear infinite; }
+@keyframes loading { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .scene-state[data-state="loading"] #scene-state-title::before { animation: none; } }
+.viewer-help { margin: 0; padding: 14px 22px; border-top: 1px solid #e5ebe6; color: #61736c; font-size: 12px; line-height: 1.5; }
+.print-panel { display: flex; flex-direction: column; min-height: 0; overflow: auto; border-left: 1px solid #d8e0d9; background: #fbfcf9; }
+.selection { padding: 26px 24px 24px; border-bottom: 1px solid #d8e0d9; }
+h2 { margin: 0; font-size: 19px; line-height: 1.35; font-weight: 600; letter-spacing: -.025em; overflow-wrap: anywhere; }
+#print-status, #print-note { margin: 12px 0; font-size: 13px; line-height: 1.65; color: #53685e; }
+.muted { color: #738079; font-size: 11px; line-height: 1.6; }
+.download-actions { display: flex; flex-direction: column; gap: 8px; margin-top: 18px; }
+.download { display: flex; justify-content: space-between; align-items: center; gap: 10px; padding: 12px 14px; border: 1px solid #cbd6cf; border-radius: 5px; color: #355b4d; text-decoration: none; font-size: 13px; font-weight: 650; }
+.download.primary { background: #245e48; color: #fff; border-color: #245e48; }
+.download.primary:hover { background: #184b38; }
+.download.secondary:hover { background: #eaf0e9; }
+.download span { font-size: 18px; line-height: 1; }
+.download:focus-visible, .part-button:focus-visible, .retry:focus-visible { outline: 3px solid #609982; outline-offset: 3px; }
+.parts { padding: 22px 16px; }
+.parts-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; padding: 0 8px 12px; }
+.parts-heading h2 { font-size: 13px; letter-spacing: 0; }
+#parts-list { list-style: none; padding: 0; margin: 0; display: grid; gap: 4px; }
+.part-button { width: 100%; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 9px; text-align: left; border: 1px solid transparent; border-radius: 5px; background: transparent; color: #3f594c; font: inherit; cursor: pointer; }
+.part-button:hover { background: #edf2eb; }
+.part-button[aria-pressed="true"] { background: #e5eee4; border-color: #bfd3bd; color: #234a35; }
+.part-name { display: block; font-size: 12px; font-weight: 600; overflow-wrap: anywhere; }
+.part-kind { display: block; margin-top: 3px; font-size: 10px; color: #748278; }
+.part-format { flex: 0 0 auto; border: 1px solid #cfdbcf; border-radius: 3px; padding: 3px 5px; font-size: 9px; letter-spacing: .04em; }
+.build-status { margin: auto 24px 24px; border-top: 1px solid #e0e6dd; padding-top: 16px; color: #788174; font-size: 10px; line-height: 1.6; }
+.retry { padding: 8px 0; background: none; border: 0; color: #245e48; cursor: pointer; text-decoration: underline; }
+.error { color: #a1382f; font-size: 13px; padding: 14px 22px; }
+@media (max-width: 1000px) {
+  .workspace { grid-template-columns: minmax(0, 1fr) 290px; }
+  .workspace.catalog-mode { grid-template-columns: 210px minmax(0, 1fr); height: auto; min-height: calc(100dvh - 100px); }
+  .catalog-mode .project-panel { grid-row: 1 / 3; max-height: calc(100dvh - 100px); position: sticky; top: 0; }
+  .catalog-mode .model-panel { height: 620px; }
+  .catalog-mode .print-panel { grid-column: 2; border-top: 1px solid #d8e0d9; border-left: 0; overflow: visible; }
+  .app-header { padding-left: 20px; padding-right: 20px; }
+  .selection { padding: 24px 18px; }
+}
+@media (max-width: 780px) {
+  .app-header { align-items: flex-start; flex-direction: column; gap: 16px; padding: 20px; }
+  .build { text-align: left; }
+  .build code { max-width: none; }
+  .workspace, .workspace.catalog-mode { display: flex; flex-direction: column; height: auto; min-height: 0; }
+  .catalog-mode .project-panel { position: static; max-height: 340px; border-right: 0; border-bottom: 1px solid #d8e0d9; }
+  .project-controls { padding-top: 18px; }
+  .files-label { margin-top: 16px; }
+  .files-list { min-height: 80px; }
+  .model-panel, .catalog-mode .model-panel { height: 560px; }
+  .print-panel { border-left: 0; border-top: 1px solid #d8e0d9; overflow: visible; }
+  .parts { padding: 24px 18px; }
+  .build-status { margin-top: 0; }
+}

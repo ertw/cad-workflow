@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Workshop · CAD & print files</title>
+    <link rel="icon" href="/static/icon/ocp-eye.png">
+    <link rel="stylesheet" href="/static/css/three-cad-viewer.css">
+    <link rel="stylesheet" href="/app/viewer.css">
+    <script type="module" src="/app/viewer.js"></script>
+  </head>
+  <body>
+    <header class="app-header">
+      <div><p class="eyebrow">CAD / WORKSHOP</p><h1>Explore a project. Print a part.</h1></div>
+      <div class="build"><span class="eyebrow">DISPLAYED REVISION</span><code id="build-id">Waiting for a model</code></div>
+    </header>
+    <main class="workspace">
+      <aside id="project-panel" class="project-panel" aria-label="Projects and files" hidden>
+        <div class="project-controls">
+          <label class="eyebrow" for="project-select">PROJECT</label>
+          <select id="project-select" disabled><option value="">Loading projects…</option></select>
+          <label class="eyebrow files-label" for="file-search">FILES & CONFIGURATIONS</label>
+          <input id="file-search" type="search" placeholder="Find a file…" autocomplete="off" disabled>
+          <label id="previous-designs-control" class="previous-designs" hidden><input id="previous-designs" type="checkbox"> Show previous designs</label>
+          <div class="file-summary"><p id="file-count" class="muted" role="status"></p><button id="refresh-projects" class="retry" type="button" disabled>Refresh</button></div>
+        </div>
+        <nav id="files-list" class="files-list" aria-label="Project files"></nav>
+        <p id="project-status" class="project-status muted" role="status">Loading projects…</p>
+      </aside>
+      <section class="model-panel" aria-label="Interactive CAD model">
+        <div id="file-heading" class="file-heading" hidden><span id="current-project" class="eyebrow"></span><h2 id="current-file"></h2><p id="preview-note" class="muted" hidden></p></div>
+        <div class="viewer-scroll">
+          <div id="cad_viewer" data-model-ready="false"></div>
+          <div id="scene-state" class="scene-state" hidden>
+            <div class="scene-state-card">
+              <p id="scene-state-title" role="status"></p>
+              <p id="scene-state-detail" class="muted"></p>
+              <button id="retry-scene" class="retry" type="button" hidden>Try again</button>
+            </div>
+          </div>
+        </div>
+        <p class="viewer-help">Double-click a component in the model or select its name in the tree to see its print files.</p>
+        <p id="viewer-error" class="error" role="alert" hidden></p>
+      </section>
+      <aside class="print-panel" aria-label="Component print files">
+        <section class="selection" aria-labelledby="selected-component">
+          <p class="eyebrow">PRINT FILES</p>
+          <h2 id="selected-component">Select a component</h2>
+          <p id="print-status" role="status">Waiting for a model from the CAD workspace.</p>
+          <p id="print-note" hidden></p>
+          <p id="print-dimensions" class="muted" hidden></p>
+          <div class="download-actions">
+            <a id="download-3mf" class="download primary" hidden download>Download 3MF <span aria-hidden="true">↓</span></a>
+            <a id="download-stl" class="download secondary" hidden download>Download STL <span aria-hidden="true">↓</span></a>
+          </div>
+          <p id="download-note" class="muted" hidden>Print orientation · millimeters · full component</p>
+          <button id="clear-selection" class="retry" type="button" hidden>Clear selection</button>
+          <button id="retry-downloads" class="retry" type="button" hidden>Retry loading print files</button>
+        </section>
+        <section class="parts" aria-labelledby="parts-heading">
+          <div class="parts-heading"><h2 id="parts-heading">Parts & fit coupons</h2><span id="parts-count" class="muted"></span></div>
+          <ul id="parts-list" aria-label="Select a printable part"></ul>
+        </section>
+        <p id="build-status" class="build-status" hidden></p>
+      </aside>
+    </main>
+    <noscript>This viewer requires JavaScript to display the model and its print files.</noscript>
+  </body>
+</html>
