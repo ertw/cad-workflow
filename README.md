@@ -2,6 +2,8 @@
 
 This directory owns the shared web preview for the sibling CAD projects. The Python server, project catalog, scene conversion, browser assets, and viewer checks live here; project geometry and generated exports remain in their project directories.
 
+![CAD viewer showing the Cyclone baseline assembly, project and configuration selectors, and downloadable parts.](docs/images/cad-viewer.png)
+
 ## Run locally
 
 The pinned Nix environment and Python lock are independent of Cyclone's environment. From this directory:
