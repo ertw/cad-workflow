@@ -40,9 +40,24 @@ def server(port=3939, build_path=None, workspace=None):
     viewer.backend.load_model(logo)
     workspace, files = workspace_files(workspace, build_path)
     catalog = None if build_path else ProjectCatalog(workspace, files)
+    from .agent_actions import AgentActions
+    agent_actions = AgentActions(catalog) if catalog else None
+    from .build_actions import BuildActions
+    build_actions = BuildActions(catalog, agent_actions.lock) if catalog else None
+    from .git_actions import GitActions
+    git_actions = GitActions(catalog) if catalog else None
+    def handle_socket(ws):
+        if ws.request.path == '/api/build' and build_actions:
+            build_actions.handle(ws)
+        elif ws.request.path == '/api/agent' and agent_actions:
+            agent_actions.handle(ws)
+        elif ws.request.path == '/api/git' and git_actions:
+            git_actions.handle(ws)
+        else:
+            handle(viewer, ws)
     logging.getLogger('websockets.server').addFilter(_NotAProbe())
     try:
-        service = serve(lambda ws: handle(viewer, ws), viewer.host, viewer.port,
+        service = serve(handle_socket, viewer.host, viewer.port,
                         process_request=lambda connection, request: respond(viewer, request, files, catalog),
                         compression=None, max_size=None, open_timeout=120)
     except OSError as exc:

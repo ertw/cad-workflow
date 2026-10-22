@@ -6,7 +6,7 @@
     pkgs = nixpkgs.legacyPackages.${system};
   in {
     devShells.${system}.default = pkgs.mkShell {
-      packages = with pkgs; [ python312 uv just patchelf curl cairo fontconfig dejavu_fonts chromium ];
+      packages = with pkgs; [ python312 git uv just patchelf curl cairo fontconfig dejavu_fonts chromium ];
       # Supply native wheel libraries in this shell without host configuration.
       LD_LIBRARY_PATH = pkgs.lib.makeLibraryPath [ pkgs.stdenv.cc.cc.lib pkgs.zlib pkgs.expat pkgs.libGL pkgs.libx11 pkgs.libxext pkgs.libxrender pkgs.libice pkgs.libsm pkgs.cairo pkgs.fontconfig pkgs.freetype ];
       UV_PYTHON_DOWNLOADS = "never";

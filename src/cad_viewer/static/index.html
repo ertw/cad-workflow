@@ -24,6 +24,26 @@
           <input id="file-search" type="search" placeholder="Find a file…" autocomplete="off" disabled>
           <div class="file-summary"><p id="file-count" class="muted" role="status"></p><button id="refresh-projects" class="retry" type="button" disabled>Refresh</button></div>
         </div>
+        <section id="preview-build" class="git-panel" aria-label="Build preview" hidden>
+          <label for="build-configuration">Build configuration</label>
+          <select id="build-configuration" disabled></select>
+          <button id="build-preview" class="retry" type="button" disabled>Build preview</button>
+          <progress id="build-progress" aria-label="Build in progress" hidden></progress>
+          <p id="build-preview-status" role="status"></p>
+          <pre id="build-output" aria-label="Build output" hidden></pre>
+        </section>
+        <details id="git-panel" class="git-panel">
+          <summary>Stage & commit changes</summary>
+          <button id="git-refresh" class="retry" type="button">Refresh changes</button>
+          <div id="git-files" aria-label="Changed files"></div>
+          <button id="git-stage" class="retry" type="button" disabled>Stage selected files</button>
+          <p id="git-summary" class="muted"></p>
+          <label for="git-message">Commit message</label>
+          <textarea id="git-message" rows="5" placeholder="Stage files for an AI draft, or write your own message."></textarea>
+          <button id="git-draft" class="retry" type="button" disabled>Generate AI message</button>
+          <button id="git-commit" class="retry" type="button" disabled>Commit staged changes</button>
+          <p id="git-status" role="status"></p>
+        </details>
         <nav id="files-list" class="files-list" aria-label="Project files"></nav>
         <p id="project-status" class="project-status muted" role="status">Loading projects…</p>
       </aside>
@@ -46,8 +66,14 @@
         <section class="geometry-reference" aria-label="Agent reference">
           <p class="eyebrow">AGENT REFERENCE</p>
           <button id="copy-reference" class="retry" type="button" disabled>Copy reference</button>
-          <p class="muted">Hover geometry and press Alt+C, or use this button to copy the last hovered item. Paste into your agent chat with the change you want.</p>
-          <p id="reference-status" role="status">Hover an edge, face, or solid to capture a reference.</p>
+          <p class="muted">Click an edge to capture it. The reference stays selected while you write. Alt+C copies the captured reference.</p>
+          <p id="reference-status" role="status">Click an edge or face to capture a reference.</p>
+          <label for="agent-message">Message to Codex</label>
+          <textarea id="agent-message" rows="4" maxlength="20000" placeholder="Describe the change you want…"></textarea>
+          <p class="muted">Codex can edit files in this project. Review its changes before committing.</p>
+          <button id="send-agent" class="retry" type="button" disabled>Send to Codex</button>
+          <p id="agent-status" role="status"></p>
+          <pre id="agent-reply" aria-label="Agent reply" hidden></pre>
           <textarea id="reference-text" aria-label="Geometry reference to copy" readonly hidden></textarea>
         </section>
         <section class="selection" aria-labelledby="selected-component">

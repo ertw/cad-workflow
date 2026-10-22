@@ -4,6 +4,9 @@ import hashlib
 import json
 from pathlib import Path
 import shutil
+import subprocess
+from types import SimpleNamespace
+from unittest.mock import patch
 from tempfile import TemporaryDirectory
 
 from playwright.sync_api import sync_playwright
@@ -60,13 +63,16 @@ def run(port=3940, safe_graphics=False):
                     assert page.evaluate('cadViewer.renderer.getContext().getContextAttributes().antialias') is False
                 assert page.locator('#cad_viewer canvas').first.is_visible()
                 assert page.locator('#selected-component').inner_text() == 'module.stl'
-                # Capture an actual GPU-picked face, retaining it when moving to the button.
+                # Hover alone must not capture. A click retains the GPU-picked geometry.
                 context.grant_permissions(['clipboard-read', 'clipboard-write'])
                 assert page.locator('#copy-reference').is_disabled()
                 canvas = page.locator('#cad_viewer canvas').first.bounding_box()
                 page.mouse.move(canvas['x'] + canvas['width'] * .55,
                                 canvas['y'] + canvas['height'] * .5)
                 page.wait_for_function('Boolean(cadViewer.lastObject)')
+                assert page.locator('#copy-reference').is_disabled()
+                page.mouse.click(canvas['x'] + canvas['width'] * .55,
+                                 canvas['y'] + canvas['height'] * .5)
                 page.wait_for_function("!document.querySelector('#copy-reference').disabled")
                 hovered = page.evaluate('cadViewer.lastObject.backendId')
                 page.keyboard.press('Alt+c')
@@ -84,6 +90,47 @@ def run(port=3940, safe_graphics=False):
                 page.locator('#copy-reference').click()
                 page.locator('#reference-text').wait_for(state='visible')
                 assert page.locator('#reference-text').input_value() == copied
+
+                # Find a real GPU-pickable edge, then click its exact pixel.
+                edge = page.evaluate("""() => {
+                    const rect = cadViewer.renderer.domElement.getBoundingClientRect();
+                    for (let y = 10; y < rect.height - 10; y += 5) {
+                        for (let x = 10; x < rect.width - 10; x += 5) {
+                            const hit = cadViewer.idPicker.pickAt(x, y);
+                            if (hit?.info.topo === 'edge') return {x: rect.x + x, y: rect.y + y, path: hit.info.path};
+                        }
+                    }
+                    return null;
+                }""")
+                assert edge, 'No pickable edge in the box fixture'
+                page.mouse.click(edge['x'], edge['y'])
+                page.wait_for_function("document.querySelector('#reference-status').textContent.startsWith('Captured edge:')")
+                page.locator('#copy-reference').click()
+                edge_reference = json.loads(page.locator('#reference-text').input_value().split('\n', 1)[1].split('\nGeometry paths', 1)[0])
+                assert edge_reference['geometry_path'] == edge['path']
+                assert edge_reference['edge_endpoints'] and edge_reference['world_bounds']
+                # Pointer movement and orbiting must not overwrite the locked reference.
+                page.mouse.move(canvas['x'] + canvas['width'] * .55, canvas['y'] + canvas['height'] * .5)
+                page.locator('#copy-reference').click()
+                assert edge['path'] in page.locator('#reference-text').input_value()
+                received = []
+                real_run = subprocess.run
+                def fake_agent(args, **kwargs):
+                    if 'exec' not in args or '--output-last-message' not in args:
+                        return real_run(args, **kwargs)
+                    received.append(kwargs)
+                    Path(args[args.index('--output-last-message') + 1]).write_text('Test agent received the selected edge.')
+                    return SimpleNamespace(returncode=0)
+                with patch('cad_viewer.agent_actions.subprocess.run', side_effect=fake_agent):
+                    page.locator('#agent-message').fill('Round only this edge')
+                    page.locator('#send-agent').click()
+                    page.wait_for_function("document.querySelector('#agent-status').textContent.startsWith('Codex replied')")
+                assert len(received) == 1
+                assert received[0]['cwd'] == workspace / 'alpha'
+                assert edge['path'] in received[0]['input']
+                assert 'Round only this edge' in received[0]['input']
+                assert page.locator('#agent-reply').inner_text() == 'Test agent received the selected edge.'
+                assert page.locator('#agent-message').input_value() == 'Round only this edge'
 
                 with page.expect_download() as download:
                     page.locator('#download-stl').click()
@@ -188,7 +235,7 @@ def run(port=3940, safe_graphics=False):
                                      'failure clearing', 'retry', 'unknown link', 'empty project', 'mobile width',
                                      'graphics context loss stops retries', 'commit groups and build order',
                                      'unlinked builds', 'commit search and selection',
-                                     'hover reference shortcut and button', 'clipboard fallback',
+                                     'click reference shortcut and button', 'edge click and agent message', 'clipboard fallback',
                                      'reference cleared on file change']}
                 (output / 'report.json').write_text(json.dumps(result, indent=2) + '\n')
                 print(json.dumps(result, indent=2))

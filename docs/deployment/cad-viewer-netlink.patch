@@ -1,0 +1,11 @@
+--- a/hosts/nixos01/modules/services/cad-viewer.nix
++++ b/hosts/nixos01/modules/services/cad-viewer.nix
+@@ -57,6 +57,8 @@
+         "AF_INET"
+         "AF_INET6"
+         "AF_UNIX"
++        # Bubblewrap configures loopback inside the Codex network namespace.
++        "AF_NETLINK"
+       ];
+     };
+   };

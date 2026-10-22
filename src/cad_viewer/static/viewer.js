@@ -27,6 +27,11 @@ let retryScene = null;
 let graphicsLost = false;
 let geometryReference = null;
 let referenceKey = null;
+let referenceHighlight = null;
+let agentBusy = false;
+let buildBusy = false;
+let buildOptionsKey = null;
+let buildOptionsVersion = 0;
 let modelUnits = null;
 const safeGraphics = new URLSearchParams(location.search).get("graphics") === "safe"
     || (/AppleWebKit/.test(navigator.userAgent) && !/Chrome|Chromium|Edg\/|OPR\/|Android/.test(navigator.userAgent));
@@ -47,9 +52,8 @@ function visitShapes(shape, callback) {
 }
 
 // Snapshot only serializable data: upstream picked objects retain the renderer.
-function captureReference() {
+function captureReference(picked) {
     if (rendering || surface.dataset.modelReady !== "true") return;
-    const picked = cadViewer?.lastObject;
     if (!picked?.backendId) return;
     const camera = cadViewer.getCameraLocationSettings();
     const key = JSON.stringify([picked.backendId, camera]);
@@ -78,18 +82,19 @@ function captureReference() {
         component: owner(picked.backendId),
         topology: picked.asSolid ? "solid" : picked.topo,
         geometry_type: geometry?.geomType ?? null,
-        hover_measurement: cadViewer.display.statusLine.textContent,
+        selection_point: picked.point?.toArray?.() || null,
         world_bounds: bounds,
         edge_endpoints: picked.topo === "edge" && !picked.asSolid && positions?.length >= 6
             ? [Array.from(positions.slice(0, 3)), Array.from(positions.slice(-3))] : null,
         camera,
     };
+    element("reference-text").hidden = true;
     element("copy-reference").disabled = false;
+    updateAgentButton();
     text("reference-status", `Captured ${geometryReference.topology}: ${picked.backendId}`);
 }
 
 async function copyReference() {
-    captureReference();
     if (!geometryReference) return;
     const capturedRevision = revision;
     const value = "CAD geometry reference\n" + JSON.stringify(geometryReference, null, 2)
@@ -117,7 +122,7 @@ element("copy-reference").addEventListener("click", copyReference);
 window.addEventListener("keydown", (event) => {
     if (!event.altKey || event.ctrlKey || event.metaKey || event.shiftKey || event.code !== "KeyC"
         || event.repeat || event.target.closest?.("input, textarea, select, [contenteditable]")) return;
-    if (!cadViewer?.lastObject || surface.dataset.modelReady !== "true") return;
+    if (!geometryReference || surface.dataset.modelReady !== "true") return;
     event.preventDefault();
     void copyReference();
 });
@@ -290,11 +295,13 @@ function resetModel(message, metadata = null) {
     revision += 1;
     geometryReference = null;
     referenceKey = null;
+    referenceHighlight = null;
+    updateAgentButton();
     modelUnits = metadata?.units || message?.data?.units || null;
     element("copy-reference").disabled = true;
     element("reference-text").hidden = true;
     element("reference-text").value = "";
-    text("reference-status", "Hover an edge, face, or solid to capture a reference.");
+    text("reference-status", "Click an edge or face to capture a reference.");
     request?.abort();
     parts = new Map();
     selectedPaths = [];
@@ -412,6 +419,8 @@ window.addEventListener("focus", () => {
 });
 
 function renderFiles() {
+    void syncBuildOptions();
+    syncGitProject();
     void refreshWorkingTree();
     const list = element("files-list");
     const query = element("file-search").value.trim().toLocaleLowerCase();
@@ -711,11 +720,36 @@ class EmbeddedViewer extends Viewer {
             resetModel(null);
             showGraphicsFailure();
         }, true);
-        const hover = this.pickingController.handleHover.bind(this.pickingController);
-        this.pickingController.handleHover = () => {
-            hover();
-            captureReference();
-        };
+        // Resolve the click itself; lastObject may describe an older hover position.
+        const canvas = this.renderer.domElement;
+        let pointerDown = null;
+        canvas.addEventListener("pointerdown", (event) => {
+            pointerDown = event.button === 0 && event.isPrimary
+                ? { x: event.clientX, y: event.clientY, revision,
+                    camera: JSON.stringify(this.getCameraLocationSettings()) } : null;
+        });
+        canvas.addEventListener("pointercancel", () => { pointerDown = null; });
+        canvas.addEventListener("pointerup", (event) => {
+            const down = pointerDown;
+            pointerDown = null;
+            if (!down || event.button !== 0 || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey
+                || Math.hypot(event.clientX - down.x, event.clientY - down.y) > 4
+                || down.revision !== revision || rendering || surface.dataset.modelReady !== "true"
+                || down.camera !== JSON.stringify(this.getCameraLocationSettings())) return;
+            const rect = canvas.getBoundingClientRect();
+            const x = event.clientX - rect.left, y = event.clientY - rect.top;
+            if (x < 0 || y < 0 || x >= rect.width || y >= rect.height) return;
+            const hit = this.idPicker?.pickAt(x, y);
+            if (!hit || !this.pickingController.pickVisible(hit.info)) return;
+            const highlight = this.rendered.nestedGroup.highlight;
+            if (referenceHighlight && !referenceHighlight.wasSelected) {
+                highlight.setSelected(referenceHighlight.id, false);
+            }
+            referenceHighlight = { id: hit.info.id, wasSelected: highlight.isSelected(hit.info.id) };
+            highlight.setSelected(hit.info.id, true);
+            captureReference({ backendId: hit.info.path, topo: hit.info.topo, asSolid: false, point: hit.point });
+            this.update(true, false);
+        });
         const pick = this.handlePick;
         this.handlePick = (path, name, meta, shift, ...rest) => {
             pick(path, name, meta, shift, ...rest);
@@ -825,4 +859,236 @@ start().catch((error) => {
     optionalText("viewer-error", error.message);
     text("print-status", "The viewer could not start. Refresh to retry.");
     console.error(error);
+});
+
+let gitProject = null;
+let gitState = null;
+let gitBusy = false;
+let gitVersion = 0;
+
+function gitCommand(action, payload = {}) {
+    const project = gitProject;
+    return new Promise((resolve, reject) => {
+        const socket = new WebSocket(`${location.protocol === "https:" ? "wss:" : "ws:"}//${location.host}/api/git`);
+        const timer = setTimeout(() => { socket.close(); reject(new Error("Request timed out. Refresh changes before retrying.")); }, 150000);
+        socket.onopen = () => socket.send(JSON.stringify({ project, action, ...payload }));
+        socket.onmessage = (event) => {
+            try {
+                const data = JSON.parse(event.data);
+                if (data.error) reject(new Error(data.error));
+                else resolve(data.result);
+            } catch (error) { reject(error); }
+            socket.close();
+        };
+        socket.onerror = () => reject(new Error("Could not connect to Git service."));
+        socket.onclose = () => { clearTimeout(timer); reject(new Error("Git connection closed. Refresh changes to check the result.")); };
+    });
+}
+function gitButtons() {
+    element("git-refresh").disabled = gitBusy || !gitProject;
+    element("git-stage").disabled = gitBusy || !element("git-files").querySelector("input:checked");
+    element("git-draft").disabled = gitBusy || !gitState?.has_staged;
+    element("git-commit").disabled = gitBusy || !gitState?.has_staged || !element("git-message").value.trim();
+}
+function renderGit(state) {
+    gitState = state;
+    const list = element("git-files");
+    list.replaceChildren();
+    for (const file of state.files) {
+        const label = document.createElement("label");
+        const check = document.createElement("input");
+        check.type = "checkbox";
+        check.value = file.path;
+        check.disabled = file.status[1] === " ";
+        check.addEventListener("change", gitButtons);
+        label.append(check, document.createTextNode(`${file.status} ${file.path}${file.staged ? " (staged)" : ""}`));
+        list.append(label);
+    }
+    text("git-summary", state.files.length ? `${state.files.filter(f => f.staged).length} staged files. All staged changes will be committed.` : "Working tree is clean.");
+    gitButtons();
+}
+function syncGitProject() {
+    if (gitProject === (currentProject?.id || null)) return;
+    gitProject = currentProject?.id || null;
+    gitVersion++;
+    gitBusy = false;
+    gitState = null;
+    element("git-files").replaceChildren();
+    element("git-message").value = "";
+    text("git-summary", "");
+    text("git-status", "");
+    gitButtons();
+    if (element("git-panel").open && gitProject) void runGit("status");
+}
+async function runGit(action) {
+    if (gitBusy || !gitProject) return;
+    gitBusy = true;
+    const version = gitVersion;
+    const originalMessage = element("git-message").value;
+    gitButtons();
+    text("git-status", action === "message" ? "Drafting commit message…" : "Working…");
+    try {
+        const result = await gitCommand(action, {
+            paths: [...element("git-files").querySelectorAll("input:checked")].map(input => input.value),
+            snapshot: gitState?.snapshot, message: originalMessage,
+        });
+        if (version !== gitVersion) return;
+        if (action === "message") {
+            if (element("git-message").value === originalMessage) element("git-message").value = result.message;
+            text("git-status", "AI draft ready. Review the message before committing.");
+        } else {
+            renderGit(result);
+            text("git-status", result.commit ? `Committed ${result.commit}.` : "Changes refreshed.");
+            if (result.commit) element("git-message").value = "";
+            if (action === "stage" && !element("git-message").value.trim()) {
+                gitBusy = false;
+                await runGit("message");
+            }
+            void refreshWorkingTree();
+        }
+    } catch (error) {
+        if (version === gitVersion) text("git-status", error.message);
+    } finally {
+        if (version === gitVersion) { gitBusy = false; gitButtons(); }
+    }
+}
+element("git-panel").addEventListener("toggle", () => {
+    if (element("git-panel").open) void runGit("status");
+});
+element("git-refresh").addEventListener("click", () => runGit("status"));
+element("git-stage").addEventListener("click", () => runGit("stage"));
+element("git-draft").addEventListener("click", () => runGit("message"));
+element("git-commit").addEventListener("click", () => runGit("commit"));
+element("git-message").addEventListener("input", gitButtons);
+
+function updateAgentButton() {
+    element("send-agent").disabled = agentBusy || buildBusy || !geometryReference?.project
+        || !geometryReference?.file || !element("agent-message").value.trim();
+}
+element("agent-message").addEventListener("input", updateAgentButton);
+element("send-agent").addEventListener("click", async () => {
+    if (agentBusy || !geometryReference?.project) return;
+    const message = element("agent-message").value.trim();
+    if (!message) return;
+    const reference = structuredClone(geometryReference);
+    agentBusy = true;
+    updateBuildButton();
+    updateAgentButton();
+    element("agent-reply").hidden = true;
+    text("agent-status", `Codex is working on ${reference.project}: ${reference.geometry_path}…`);
+    try {
+        const result = await new Promise((resolve, reject) => {
+            const socket = new WebSocket(`${location.protocol === "https:" ? "wss:" : "ws:"}//${location.host}/api/agent`);
+            socket.onopen = () => socket.send(JSON.stringify({ project: reference.project, message, reference }));
+            socket.onmessage = (event) => {
+                try {
+                    const data = JSON.parse(event.data);
+                    if (data.error) reject(new Error(data.error));
+                    else resolve(data.result);
+                } catch (error) { reject(error); }
+                socket.close();
+            };
+            socket.onerror = () => reject(new Error("Could not connect to the agent service."));
+            socket.onclose = () => reject(new Error("Agent connection closed. The task may still be running; review changes before resending."));
+        });
+        text("agent-status", `Codex replied for ${reference.project}: ${reference.geometry_path}. Read the reply to check whether the requested change was completed.`);
+        text("agent-reply", result.reply);
+        element("agent-reply").hidden = false;
+        void refreshWorkingTree();
+        if (gitProject === reference.project && !gitBusy) void runGit("status");
+    } catch (error) {
+        text("agent-status", `${reference.project}: ${error.message}`);
+    } finally {
+        agentBusy = false;
+        updateBuildButton();
+        updateAgentButton();
+    }
+});
+
+function buildRequest(action, payload, progress = () => {}) {
+    return new Promise((resolve, reject) => {
+        const socket = new WebSocket(`${location.protocol === "https:" ? "wss:" : "ws:"}//${location.host}/api/build`);
+        socket.onopen = () => socket.send(JSON.stringify({ action, ...payload }));
+        socket.onmessage = (event) => {
+            try {
+                const data = JSON.parse(event.data);
+                if (data.progress !== undefined) { progress(data.progress); return; }
+                if (data.error) reject(new Error(data.error));
+                else resolve(data.result);
+            } catch (error) { reject(error); }
+            socket.close();
+        };
+        socket.onerror = () => reject(new Error("Could not connect to the build service."));
+        socket.onclose = () => reject(new Error("Build connection closed. Refresh the file list to check for a completed build before retrying."));
+    });
+}
+function updateBuildButton() {
+    element("build-preview").disabled = buildBusy || agentBusy || !element("build-configuration").value;
+    element("build-configuration").disabled = buildBusy || !element("build-configuration").options.length;
+}
+async function syncBuildOptions(preserveStatus = false) {
+    const payload = { project: currentProject?.id, file: currentFile?.id, revision: currentFile?.revision };
+    const key = JSON.stringify(payload);
+    if (buildBusy || key === buildOptionsKey) return;
+    buildOptionsKey = key;
+    const version = ++buildOptionsVersion;
+    const supported = ["vault", "cyclone"].includes(payload.project);
+    element("preview-build").hidden = !supported;
+    element("build-configuration").replaceChildren();
+    updateBuildButton();
+    if (!supported) return;
+    if (!preserveStatus) text("build-preview-status", "Loading build configuration…");
+    try {
+        const result = await buildRequest("options", payload);
+        if (version !== buildOptionsVersion) return;
+        const select = element("build-configuration");
+        const placeholder = new Option("Choose configuration", "");
+        placeholder.disabled = true;
+        select.append(placeholder);
+        for (const option of result.options) select.append(new Option(option.label, option.id));
+        select.value = result.default || "";
+        if (!preserveStatus) text("build-preview-status", "Builds the current project source. The displayed preview stays visible during the build.");
+    } catch (error) {
+        if (version === buildOptionsVersion) {
+            buildOptionsKey = null;
+            text("build-preview-status", error.message);
+        }
+    } finally { if (version === buildOptionsVersion) updateBuildButton(); }
+}
+element("build-configuration").addEventListener("change", updateBuildButton);
+element("build-preview").addEventListener("click", async () => {
+    if (buildBusy || agentBusy || !element("build-configuration").value) return;
+    const payload = { project: currentProject.id, file: currentFile?.id, revision: currentFile?.revision,
+        configuration: element("build-configuration").value };
+    const originalSceneVersion = sceneVersion;
+    buildBusy = true;
+    updateBuildButton();
+    updateAgentButton();
+    element("build-progress").hidden = false;
+    element("build-output").hidden = false;
+    text("build-output", "");
+    text("build-preview-status", `Building ${payload.project}…`);
+    try {
+        const result = await buildRequest("build", payload, chunk => {
+            const output = element("build-output");
+            output.textContent = (output.textContent + chunk).slice(-50000);
+            output.scrollTop = output.scrollHeight;
+        });
+        if (sceneVersion === originalSceneVersion && currentProject?.id === payload.project) {
+            updateLocation(result.project, result.file);
+            await loadCatalog();
+            text("build-preview-status", "Build succeeded. Loading the new preview…");
+        } else {
+            text("build-preview-status", `Build succeeded for ${payload.project}. Refresh its file list to view it.`);
+        }
+    } catch (error) { text("build-preview-status", error.message); }
+    finally {
+        buildBusy = false;
+        element("build-progress").hidden = true;
+        updateBuildButton();
+        updateAgentButton();
+        // Refresh configuration on the next selection, without erasing this build's result.
+        buildOptionsKey = null;
+        if (currentProject?.id !== payload.project || currentFile?.id !== payload.file) void syncBuildOptions(true);
+    }
 });

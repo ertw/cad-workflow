@@ -186,10 +186,16 @@ class ProjectCatalog:
             return {'state': 'unavailable'}
         return {'state': 'dirty' if result.stdout else 'clean'}
 
-    def download(self, project_id, file_id, revision, format):
-        if not revision or format != 'stl':
+    def download(self, project_id, file_id, revision, format, filename=None):
+        if not revision or format not in ('stl', '3mf'):
             raise FileNotFoundError('Unknown download')
         entry = self.resolve(project_id, file_id, revision)
+        if entry.kind == 'assembly' and filename is not None:
+            from .web import BuildFiles
+            files = BuildFiles(entry.path.parent, entry.path)
+            return files.download(entry.build_id, format, filename), filename, 'model/' + format
+        if filename is not None or format != 'stl':
+            raise FileNotFoundError('Unknown download')
         return entry.read_bytes(), entry.path.name, 'model/stl'
 
     def _record(self, entry):
@@ -296,6 +302,19 @@ class ProjectCatalog:
                         or not re.fullmatch(r'\d{8}T\d{12}Z-[a-f0-9]{12}', build_id)
                         or output.name != build_id):
                     return
+            if build_id and manifest.get('viewer') == 'viewer.json':
+                from .web import BuildFiles
+                files = BuildFiles(output.parent, output)
+                metadata = files.metadata(build_id)
+                file_id = 'build-' + build_id
+                if output.resolve() == (boundary / 'latest-successful').resolve():
+                    self._defaults[project_id] = file_id
+                yield CatalogEntry(project_id, file_id, manifest.get('name', 'Assembly'),
+                                   'Configurations', 'assembly', build_id, output, output_boundary,
+                                   git=_provenance(manifest), build_id=build_id,
+                                   print_note=manifest.get('print_orientation', ''),
+                                   status=metadata['status'], units=metadata['units'])
+                return
             if not (manifest.get('cad_valid') is True and manifest.get('solids') == 1
                     and manifest.get('stl_watertight') is True
                     and manifest.get('stl_winding_consistent') is True
@@ -332,5 +351,5 @@ class ProjectCatalog:
                                    print_note=note, status='Completed CAD build',
                                    units=manifest.get('units', 'mm'), checksum=checksum,
                                    fingerprint=fingerprint)
-        except (OSError, ValueError, TypeError, AttributeError):
+        except (OSError, ValueError, TypeError, AttributeError, KeyError):
             return

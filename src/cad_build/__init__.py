@@ -139,3 +139,29 @@ class Build:
             self.stage.rename(failed)
         if kind is None and not self.completed:
             raise RuntimeError('Build exited without completing')
+
+
+def run_build(root, configuration_hash, generate, *, parameters, inputs=None,
+              output=None, promote=True, aliases=()):
+    """Common project pipeline: stage, generate/check, describe, freeze, publish.
+
+    ``generate(state)`` exports and validates project geometry, then returns
+    (manifest metadata, viewer description). Only validated results are published.
+    """
+    with Build(root, configuration_hash, inputs=inputs, output=output, promote=promote) as state:
+        print(f'Build {state.id}: generating and validating CAD', flush=True)
+        metadata, viewer = generate(state)
+        if metadata.get('passed') is not True:
+            raise ValueError('Project validation must pass before publishing a build')
+        print('Writing preview metadata and publishing validated artifacts', flush=True)
+        write_json(state.stage / 'resolved-parameters.json', parameters)
+        write_json(state.stage / 'viewer.json', {**viewer, 'build_id': state.id})
+        destination = state.complete({**metadata, 'viewer': 'viewer.json'})
+        if promote:
+            for alias in aliases:
+                pointer = state.output / alias
+                if Path(alias).is_absolute() or '..' in Path(alias).parts:
+                    raise ValueError('Build alias must stay inside the output directory')
+                set_latest(destination, pointer)
+    print(f'Success: {destination}', flush=True)
+    return destination

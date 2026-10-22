@@ -84,6 +84,11 @@ class BuildFiles:
 
 def respond(viewer, request, files, catalog=None):
     if request.headers.get('Upgrade', '').lower() == 'websocket':
+        if urlsplit(request.path).path in ('/api/git', '/api/agent', '/api/build'):
+            origin = urlsplit(request.headers.get('Origin', ''))
+            if (catalog is None or origin.scheme not in ('http', 'https')
+                    or origin.netloc != request.headers.get('Host')):
+                return _json({'error': 'Same-origin browser connection required'}, HTTPStatus.FORBIDDEN)
         return None
     url = urlsplit(request.path)
     path = unquote(url.path)
@@ -131,8 +136,9 @@ def respond(viewer, request, files, catalog=None):
                            b',"file":' + json.dumps(descriptor).encode() + b'}')
                 return _response(HTTPStatus.OK, payload, 'application/json; charset=utf-8',
                                  {'Cache-Control': 'no-store'})
-            if len(segments) == 8 and segments[5] == 'downloads':
-                data, filename, mime = catalog.download(project, file_id, segments[6], segments[7])
+            if len(segments) in (8, 9) and segments[5] == 'downloads':
+                data, filename, mime = catalog.download(project, file_id, segments[6], segments[7],
+                                                        segments[8] if len(segments) == 9 else None)
                 return _response(HTTPStatus.OK, data, mime, {
                     'Content-Disposition': "attachment; filename*=UTF-8''" + quote(filename, safe=''),
                     'Cache-Control': 'private, no-cache',
@@ -162,7 +168,11 @@ def respond(viewer, request, files, catalog=None):
 
 def _file_metadata(entry, files):
     if entry.kind == 'assembly':
-        metadata = files.metadata(entry.build_id)
+        metadata = BuildFiles(entry.path.parent, entry.path).metadata(entry.build_id)
+        for part in metadata['parts']:
+            part['downloads'] = {fmt: f'/api/projects/{entry.project_id}/files/{entry.id}'
+                                 f'/downloads/{entry.revision}/{fmt}/{part["name"]}.{fmt}'
+                                 for fmt in part['downloads']}
     else:
         metadata = {
             'units': entry.units, 'status': entry.status,

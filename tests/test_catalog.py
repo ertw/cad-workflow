@@ -363,3 +363,20 @@ def test_shared_vault_builds_keep_history_and_provenance(workspace):
     data['passed'] = False
     (output / 'manifest.json').write_text(json.dumps(data))
     assert len(project_files(index)) == 4
+
+
+def test_step_assembly_in_another_project(tmp_path):
+    from cad_viewer.web import _file_metadata
+    path = make_build(tmp_path, 1, 'vault')
+    target = tmp_path / 'vault/out/builds' / path.name
+    target.parent.mkdir(parents=True)
+    path.rename(target)
+    manifest_path = target / 'manifest.json'
+    manifest = json.loads(manifest_path.read_text())
+    manifest.update(schema='cad-build-v1', viewer='viewer.json', name='S4 Module 1F')
+    manifest_path.write_text(json.dumps(manifest))
+    catalog = ProjectCatalog(tmp_path, BuildFiles(tmp_path / 'cyclone/out/builds'))
+    entry = catalog.resolve('vault', 'build-' + target.name)
+    assert entry.kind == 'assembly'
+    assert entry.path == target
+    assert _file_metadata(entry, catalog.build_files)['build_id'] == target.name

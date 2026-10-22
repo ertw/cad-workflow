@@ -101,7 +101,7 @@ def test_project_scene_keeps_downloads_on_requested_revision(builds, monkeypatch
     assert result['metadata']['project_id'] == 'cyclone'
     assert result['metadata']['file_id'] == file['id']
     download = result['metadata']['parts'][0]['downloads']['3mf']
-    assert request(files, download).body == b'revision-0'
+    assert respond(None, SimpleNamespace(path=download, headers=Headers()), files, catalog).body == b'revision-0'
 
 
 def test_project_scene_requires_revision_and_rejects_unknown_files(builds):
@@ -161,3 +161,43 @@ def test_current_project_working_tree(tmp_path):
     (project / 'pyproject.toml').unlink()
     assert json.loads(status().body)['state'] == 'dirty'
     assert status().headers['Cache-Control'] == 'no-store'
+
+
+@pytest.mark.parametrize("endpoint", ["/api/git", "/api/agent", "/api/build"])
+def test_command_socket_requires_same_origin(endpoint):
+    for origin, expected in [('https://evil.example', 403), ('', 403), ('http://localhost:3939', None)]:
+        response = respond(None, SimpleNamespace(path=endpoint, headers=Headers({
+            'Upgrade': 'websocket', 'Host': 'localhost:3939', 'Origin': origin,
+        })), None, object())
+        assert (response.status_code if response else None) == expected
+
+
+def test_assembly_downloads_are_scoped_to_project_and_revision(builds, tmp_path):
+    import shutil
+    from cad_viewer.catalog import ProjectCatalog
+    from cad_viewer.web import _file_metadata
+    _, source, identifiers = builds
+    workspace = tmp_path / 'workspace'
+    vault = workspace / 'vault/out/builds'
+    for identifier in identifiers:
+        target = vault / identifier
+        shutil.copytree(source / identifier, target)
+        manifest = json.loads((target / 'manifest.json').read_text())
+        manifest.update(schema='cad-build-v1', viewer='viewer.json')
+        (target / 'manifest.json').write_text(json.dumps(manifest))
+    files = BuildFiles(workspace / 'cyclone/out/builds')
+    catalog = ProjectCatalog(workspace, files)
+    catalog.metadata()
+    entry = catalog.resolve('vault', 'build-' + identifiers[0], identifiers[0])
+    url = _file_metadata(entry, files)['parts'][0]['downloads']['3mf']
+    def get(path):
+        return respond(None, SimpleNamespace(path=path, headers=Headers()), files, catalog)
+    assert url.startswith('/api/projects/vault/')
+    assert get(url).body == b'revision-0'
+    assert get(url).headers['Content-Type'] == 'model/3mf'
+    assert get(url.replace('chamber.3mf', 'unknown.3mf')).status_code == 404
+    assert get(url.replace('chamber.3mf', '%2e%2e%2fmanifest.json')).status_code == 404
+    assert get(url.replace('/vault/', '/cyclone/')).status_code == 404
+    assert get(url.replace('/downloads/' + identifiers[0], '/downloads/' + identifiers[1])).status_code == 409
+    (vault / identifiers[0] / '3mf/chamber.3mf').write_bytes(b'corrupt')
+    assert get(url).status_code == 409

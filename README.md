@@ -62,17 +62,77 @@ Cyclone's existing viewer commands delegate to this application for compatibilit
 
 ### Sharing geometry with an agent
 
-Hover an edge, face, or solid and press **Alt+C**, or move to **Copy reference**
-in the Agent reference panel to copy the last hovered item. Paste the reference
-into your agent chat and describe the requested change, for example:
+Click an edge or face to lock its reference in the **Agent reference** panel.
+Moving the pointer or orbiting the model does not replace it. Use **Alt+C** or
+**Copy reference** to copy it, or type a message and click **Send to Codex**.
+For example:
 “Please simplify the geometry around this edge while preserving the outer
 dimensions and mounting holes.” A screenshot alongside the reference helps
 communicate the intended region.
 
 The reference includes the displayed file/revision, geometry path, tessellated
-world bounds, edge endpoints when available, hover measurements, and camera.
+world bounds, edge endpoints when available, the clicked point, and camera.
 Paths apply only to that revision; they are not persistent IDs across rebuilds
 or source-code locations. Coordinates reflect display transforms, including
 exploded or scaled views. The URL opens the file, not the captured selection or
 camera, and the file may have changed since capture. The reference is cleared
 when the model changes. If clipboard access fails, copy from the text box shown.
+
+Each send runs a new Codex task in the selected project with the captured reference
+and your message. Codex may edit project files using a workspace-write sandbox;
+it is instructed to leave staging and committing to you. The reply appears in
+the panel. Requests are not automatically retried if the connection drops, because
+the agent may still be working. Review changes before resending. Only one geometry
+agent request runs at a time. This uses the same Codex CLI configuration as commit
+message drafting. In pinned/live previews, references can be copied but direct
+sending requires selecting a project from the catalog.
+
+### Stage and commit from the viewer
+
+Open **Stage & commit changes** in the project sidebar. Refresh the changed-file
+list, select files, and choose **Stage selected files**. Staging includes the full
+file, including deletions. The panel shows existing staged files too; committing
+includes all staged changes in the selected project's repository.
+
+After staging, an empty message is automatically filled by `codex exec` using the
+staged diff (up to 100 KB). The viewer process needs the Codex CLI on its PATH and
+an authenticated Codex configuration. Generation uses a read-only sandbox. You can
+edit the draft, request another draft, or write a message manually if AI is
+unavailable. Click **Commit staged changes** to create the local commit. Nothing
+is pushed. Git identity and hooks use the project's normal configuration.
+
+Changes to the staged diff or HEAD after review require a refresh before commit.
+Git commands use a same-origin WebSocket and require the selected project to be
+its repository root. Saved build provenance remains unchanged by a new commit.
+
+For service deployments, include Git and Node.js in the service PATH and set
+`CAD_VIEWER_CODEX` to the installed Codex launcher when it is outside that PATH.
+A read-only service must explicitly allow repository writes for staging/committing
+and Codex state writes for AI drafting. The proposed NixOS adjustments are in
+[the service patch](docs/deployment/cad-viewer-service.patch); applying them changes
+the service's filesystem permissions and requires administrator approval.
+
+### Build a preview
+
+Use **Build preview** in the project sidebar to build the current source. Vault
+keeps the selected module size; Cyclone offers the current presets and selects the
+one matching the displayed build when possible. If that preset has changed or is
+missing, choose a configuration explicitly.
+
+The viewer streams build output and displays an activity indicator while the
+previous model remains visible. Successful builds automatically open the exact
+newly published revision. If you navigate elsewhere during a build, your new
+selection is preserved; refresh the project's files to find the result. Failed
+builds keep the existing preview and show their output. Builds time out after
+30 minutes. A disconnected build socket stops a running build; if disconnection
+happens during publication, refresh the file list before retrying.
+
+Both projects use `cad_build.run_build` for staging, metadata, validation gating,
+immutable publishing, and latest pointers, and `python -m cad_build.runner` for
+viewer execution. Project adapters provide their geometry, exports, and domain
+checks. Builds use each project's prepared virtualenv and the viewer's native
+library environment; they never install dependencies. Agent edits and preview
+builds share a lock. Existing CLI/just build commands use the same pipeline.
+
+Run `python -m cad_viewer.browser_build_check` in the tooling environment for
+browser coverage of progress, errors, and automatic preview loading.

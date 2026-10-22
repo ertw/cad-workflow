@@ -1,0 +1,22 @@
+--- a/hosts/nixos01/modules/services/cad-viewer.nix
++++ b/hosts/nixos01/modules/services/cad-viewer.nix
+@@ -12,8 +12,9 @@
+     after = [ "network.target" ];
+     unitConfig.RequiresMountsFor = [ tooling projects ];
+     # Retain the Nix interpreter used by the tooling's virtualenv in the closure.
+-    path = [ pkgs.python312 ];
++    path = [ pkgs.python312 pkgs.git pkgs.nodejs ];
+     environment = {
++      CAD_VIEWER_CODEX = "/home/ertw/.local/bin/codex";
+       PYTHONPATH = "${tooling}/src";
+       PYTHONDONTWRITEBYTECODE = "1";
+       PYTHONUNBUFFERED = "1";
+@@ -45,6 +46,8 @@
+       PrivateTmp = true;
+       ProtectSystem = "strict";
+       ProtectHome = "read-only";
++      # Git writes project repositories; Codex maintains local session state.
++      ReadWritePaths = [ projects "/home/ertw/.codex" ];
+       ProtectKernelTunables = true;
+       ProtectKernelModules = true;
+       ProtectControlGroups = true;
