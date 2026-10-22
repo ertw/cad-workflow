@@ -11,7 +11,9 @@ import urllib.request
 def workspace_files(workspace=None, build_path=None):
     """Resolve all project discovery relative to the selected workspace."""
     from .web import BuildFiles
-    workspace = Path(workspace).resolve() if workspace else Path(__file__).resolve().parents[3]
+    from .catalog import project_workspace
+    workspace = project_workspace(workspace if workspace is not None else
+                                  Path(__file__).resolve().parents[3] / 'projects')
     return workspace, BuildFiles(workspace / 'cyclone/out/builds', build_path)
 
 

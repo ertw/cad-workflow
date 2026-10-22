@@ -12,6 +12,24 @@ SAFE_ID = re.compile(r'[A-Za-z0-9_-]+')
 SHA256 = re.compile(r'[a-f0-9]{64}')
 
 
+def _provenance(manifest):
+    value = manifest.get('git')
+    if (isinstance(value, dict)
+            and re.fullmatch(r'[a-f0-9]{40}|[a-f0-9]{64}', str(value.get('commit', '')))
+            and isinstance(value.get('message'), str)
+            and isinstance(value.get('committed_at'), str)
+            and isinstance(value.get('dirty'), bool)):
+        return value
+    return None
+
+
+def project_workspace(workspace):
+    """Accept either a project directory collection or its enclosing workspace."""
+    root = Path(workspace).resolve()
+    projects = root / 'projects'
+    return projects if projects.is_dir() else root
+
+
 def _identity(value):
     return hashlib.sha256(value.encode()).hexdigest()[:20]
 
@@ -41,6 +59,7 @@ class CatalogEntry:
     revision: str
     path: Path
     root: Path
+    git: dict | None = field(default=None)
     build_id: str | None = None
     print_note: str = 'Build export; print orientation is not recorded.'
     status: str = 'Completed CAD build'
@@ -70,7 +89,7 @@ class CatalogEntry:
 
     def metadata(self):
         return {key: getattr(self, key) for key in
-                ('id', 'name', 'group', 'kind', 'revision')}
+                ('id', 'name', 'group', 'kind', 'revision', 'git')}
 
     def read_bytes(self):
         """Check the selected revision both before and after reading an STL.
@@ -102,7 +121,7 @@ class ProjectCatalog:
     """
 
     def __init__(self, workspace, build_files):
-        self.workspace = Path(workspace).resolve()
+        self.workspace = project_workspace(workspace)
         self.build_files = build_files
         self._entries = {}
         self._revisions = {}
@@ -121,9 +140,17 @@ class ProjectCatalog:
                                        key=lambda item: (item[0] != 'cyclone', item[1].casefold())):
             files = [entry.metadata() for entry in self._entries.values()
                      if entry.project_id == project_id]
-            files.sort(key=lambda item: (item['group'].casefold(), item['name'].casefold(), item['id']))
-            projects.append({'id': project_id, 'name': name, 'files': files,
-                             'default_file': self._defaults.get(project_id, files[0]['id'] if files else None)})
+            history = project_id in {'cyclone', 'vault'} and bool(files)
+            if history:
+                files.sort(key=lambda item: item['name'].casefold())
+                files.sort(key=lambda item: item['revision'] if re.match(r'\d{8}T', item['revision']) else '', reverse=True)
+            else:
+                files.sort(key=lambda item: (item['group'].casefold(), item['name'].casefold(), item['id']))
+            project = {'id': project_id, 'name': name, 'files': files,
+                       'default_file': self._defaults.get(project_id, files[0]['id'] if files else None)}
+            if history:
+                project['build_history'] = True
+            projects.append(project)
         return {'projects': projects}
 
     def resolve(self, project_id, file_id, revision=None):
@@ -159,7 +186,7 @@ class ProjectCatalog:
         if not self.workspace.is_dir():
             return
         for project in sorted(self.workspace.iterdir()):
-            if (project.name == 'viewer' or project.resolve() == Path(__file__).resolve().parents[2]
+            if (project.name in {'viewer', 'cad-tooling'} or project.resolve() == Path(__file__).resolve().parents[2]
                     or project.name.startswith('.') or not project.is_dir()
                     or project.resolve().parent != self.workspace):
                 continue
@@ -192,8 +219,7 @@ class ProjectCatalog:
                 presets[hashlib.sha256(data).hexdigest()] = preset.stem
             except (OSError, ValueError):
                 continue
-        # Older revisions remain resolvable, while each configuration has one
-        # current entry. An explicitly pinned build is preferred for its config.
+        # Each successful build remains independently selectable.
         paths.sort(key=lambda path: (path == files.pinned, path.name))
         default_path = files.pinned or (files.builds.parent / 'latest-successful').resolve()
         for candidate in paths:
@@ -205,9 +231,10 @@ class ProjectCatalog:
                 name = presets.get(manifest.get('input_file_hash'))
                 name = name.replace('_', ' ').replace('-', ' ').title() if name else (
                     'Assembly' if configuration == 'default' else f'Configuration {configuration[:8]}')
-                entry = CatalogEntry('cyclone', 'configuration-' + _identity(str(configuration)),
+                provenance = _provenance(manifest)
+                entry = CatalogEntry('cyclone', 'build-' + candidate.name,
                                      name, 'Configurations', 'assembly', candidate.name, path,
-                                     path.resolve(), build_id=candidate.name,
+                                     path.resolve(), git=provenance, build_id=candidate.name,
                                      print_note='Part downloads use their recorded print orientation.',
                                      status=metadata['status'], units=metadata['units'])
                 self._record(entry)
@@ -224,19 +251,28 @@ class ProjectCatalog:
         boundary = root.resolve()
         for directory, children, filenames in os.walk(boundary, followlinks=False):
             children[:] = sorted(name for name in children
-                                 if not name.startswith('.') and name not in {'cache', 'source', 'review', 'reviews'}
+                                 if not name.startswith('.') and name not in {'cache', 'source', 'review', 'reviews', 'failed'}
                                  and not (Path(directory) / name).is_symlink())
-            if 'build.json' not in filenames:
+            manifest_name = 'manifest.json' if 'manifest.json' in filenames else 'build.json'
+            if manifest_name not in filenames:
                 continue
             output = Path(directory)
             if output.resolve().is_relative_to(boundary):
-                yield from self._export_files(output, boundary, project_id)
+                yield from self._export_files(output, boundary, project_id, manifest_name)
 
-    def _export_files(self, output, boundary, project_id):
+    def _export_files(self, output, boundary, project_id, manifest_name='build.json'):
         try:
             # A configuration's manifest can only declare its own artifacts.
             output_boundary = output.resolve()
-            manifest = json.loads(_confined(output / 'build.json', output_boundary).read_text())
+            manifest = json.loads(_confined(output / manifest_name, output_boundary).read_text())
+            build_id = None
+            if manifest_name == 'manifest.json':
+                build_id = manifest.get('build_id')
+                if (manifest.get('schema') != 'cad-build-v1' or manifest.get('passed') is not True
+                        or not isinstance(build_id, str)
+                        or not re.fullmatch(r'\d{8}T\d{12}Z-[a-f0-9]{12}', build_id)
+                        or output.name != build_id):
+                    return
             if not (manifest.get('cad_valid') is True and manifest.get('solids') == 1
                     and manifest.get('stl_watertight') is True
                     and manifest.get('stl_winding_consistent') is True
@@ -244,6 +280,8 @@ class ProjectCatalog:
                 return
             for relative, checksum in sorted(manifest.get('files', {}).items()):
                 path = output / relative
+                if build_id and manifest.get('checksums', {}).get(relative) != checksum:
+                    continue
                 if (path.suffix.lower() != '.stl' or not isinstance(checksum, str)
                         or not SHA256.fullmatch(checksum) or Path(relative).is_absolute()
                         or '..' in Path(relative).parts):
@@ -257,12 +295,17 @@ class ProjectCatalog:
                 note = ('Model-space STL; not transformed to the print orientation.' if is_model else
                         manifest.get('print_orientation', 'Build export; print orientation is not recorded.'))
                 configuration = output.relative_to(boundary).as_posix()
-                group = 'Built files' if configuration == '.' else 'Built files / ' + configuration
+                group = (manifest.get('name') or 'Built files') if build_id else (
+                    'Built files' if configuration == '.' else 'Built files / ' + configuration)
                 file_id = 'export-' + _identity(path.relative_to(boundary).as_posix())
                 if not is_model:
-                    self._defaults.setdefault(project_id, file_id)
+                    if output.resolve() == (boundary / 'latest-successful').resolve():
+                        self._defaults[project_id] = file_id
+                    else:
+                        self._defaults.setdefault(project_id, file_id)
                 yield CatalogEntry(project_id, file_id, path.name,
-                                   group, 'stl', checksum, path, output_boundary,
+                                   group, 'stl', build_id or checksum, path, output_boundary,
+                                   git=_provenance(manifest) if build_id else None, build_id=build_id,
                                    print_note=note, status='Completed CAD build',
                                    units=manifest.get('units', 'mm'), checksum=checksum,
                                    fingerprint=fingerprint)

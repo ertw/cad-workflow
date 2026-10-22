@@ -123,13 +123,44 @@ def run(port=3940, safe_graphics=False):
                 assert page.locator('#download-stl').is_hidden()
                 page.locator(f'[data-file-id="{second["id"]}"]').click()
                 assert page.locator('#scene-state-title').inner_text() == '3D graphics stopped'
+                # Exercise commit history using deterministic catalog metadata.
+                history_page = context.new_page()
+                history_page.on('pageerror', lambda error: errors.append(str(error)))
+                builds = []
+                for index, commit in enumerate(['a', 'b', 'b', None]):
+                    builds.append({'id': f'build-{index}', 'name': 'Baseline', 'kind': 'assembly',
+                        'group': 'Configurations', 'revision': f'202610{10 + index}T120000000000Z-test',
+                        'git': {'commit': commit * 40, 'message': f'Commit {commit}\n\nDetails',
+                                'committed_at': f'2026-10-{10 if commit == "a" else 11}T12:00:00Z',
+                                'dirty': index == 2} if commit else None})
+                builds.reverse()
+                history_page.route('**/api/projects', lambda route: route.fulfill(json={'projects': [
+                    {'id': 'cyclone', 'name': 'Cyclone', 'default_file': 'build-3', 'files': builds}]}))
+                history_page.route('**/scene?*', lambda route: route.fulfill(status=409, body='{}'))
+                history_page.goto(base + '/?project=cyclone')
+                history_page.locator('.file-group summary').first.wait_for()
+                headings = history_page.locator('.file-group summary').all_text_contents()
+                assert headings[0].startswith('Commit b') and headings[1].startswith('Commit a')
+                assert headings[2] == 'Unlinked builds'
+                newest = history_page.locator('details.file-group').first
+                newest.locator('summary').click()
+                assert newest.locator('.file-button').all_text_contents()[0].endswith('Uncommitted changes')
+                newest.locator('.file-button').first.click()
+                assert 'file=build-2' in history_page.url
+                history_page.locator('#file-search').fill('Commit a')
+                assert history_page.locator('.file-button').count() == 1
+                assert history_page.locator('.file-button').is_visible()
+                history_page.locator('#file-search').fill('')
+                history_page.screenshot(path=str(output / 'commit-history.png'), full_page=True)
+                history_page.close()
                 assert not errors, errors
                 result = {'passed': True, 'browser': browser.version, 'page_errors': errors,
                           'safe_graphics': safe_graphics,
                           'checks': ['export download bytes', 'group search', 'history', 'reload',
                                      'project switching', 'independent tabs', 'rapid selection',
                                      'failure clearing', 'retry', 'unknown link', 'empty project', 'mobile width',
-                                     'graphics context loss stops retries']}
+                                     'graphics context loss stops retries', 'commit groups and build order',
+                                     'unlinked builds', 'commit search and selection']}
                 (output / 'report.json').write_text(json.dumps(result, indent=2) + '\n')
                 print(json.dumps(result, indent=2))
             except Exception:

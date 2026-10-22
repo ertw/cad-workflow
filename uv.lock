@@ -74,7 +74,7 @@ wheels = [
 ]
 
 [[package]]
-name = "cad-viewer"
+name = "cad-tooling"
 version = "0.1.0"
 source = { virtual = "." }
 dependencies = [

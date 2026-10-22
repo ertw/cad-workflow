@@ -1,7 +1,7 @@
 [project]
-name = "cad-viewer"
+name = "cad-tooling"
 version = "0.1.0"
-description = "Loopback CAD preview for projects and their exported configurations"
+description = "Shared immutable CAD builds and loopback project preview"
 requires-python = ">=3.12,<3.13"
 dependencies = [
   "build123d==0.13.0",

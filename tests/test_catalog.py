@@ -130,7 +130,7 @@ def test_project_without_completed_exports_remains_visible(tmp_path, marker):
         {'id': 'vault', 'name': 'Vault', 'files': [], 'default_file': None}]
 
 
-def test_latest_success_per_configuration_and_historical_revision(workspace):
+def test_all_successful_builds_are_selectable_newest_first(workspace):
     old = make_build(workspace, 1, 'configuration-a')
     latest = make_build(workspace, 2, 'configuration-a')
     other = make_build(workspace, 3, 'configuration-b', source=b'small')
@@ -141,16 +141,17 @@ def test_latest_success_per_configuration_and_historical_revision(workspace):
     (presets / 'small.toml').write_bytes(b'small')
     index = catalog(workspace)
     files = project_files(index, 'cyclone')
-    assert {file['revision'] for file in files} == {latest.name, other.name}
+    assert [file['revision'] for file in files] == [other.name, latest.name, old.name]
     assert {file['name'] for file in files} == {'Baseline', 'Small'}
     baseline = next(file for file in files if file['name'] == 'Baseline')
-    entry = index.resolve('cyclone', baseline['id'], old.name)
+    old_file = next(file for file in files if file['revision'] == old.name)
+    entry = index.resolve('cyclone', old_file['id'], old.name)
     assert entry.source_kind == 'cyclone' and entry.path == old
     assert entry.build_id == old.name
     pinned = project_files(catalog(workspace, old), 'cyclone')
-    assert {file['revision'] for file in pinned} == {old.name, other.name}
+    assert {file['revision'] for file in pinned} == {old.name, latest.name, other.name}
     project = catalog(workspace, old).metadata()['projects'][0]
-    assert project['default_file'] == baseline['id']
+    assert project['default_file'] == old_file['id']
 
 
 def test_rebuild_cannot_silently_change_selected_download(workspace):
@@ -315,3 +316,50 @@ def test_export_checksums_and_manifest_confinement_are_enforced(workspace):
     manifest.unlink()
     manifest.symlink_to(external)
     assert project_files(index) == []
+
+
+def test_build_git_provenance_and_unlinked_fallback(workspace):
+    old = make_build(workspace, 1, 'same')
+    linked = make_build(workspace, 2, 'same')
+    invalid = make_build(workspace, 3, 'same')
+    provenance = {'commit': 'a' * 40, 'message': 'Improve inlet\n\nMore detail',
+                  'committed_at': '2026-10-10T00:00:00Z', 'dirty': True}
+    for path, value in [(linked, provenance), (invalid, {'commit': 'not-a-sha'})]:
+        manifest_path = path / 'manifest.json'
+        manifest = json.loads(manifest_path.read_text())
+        manifest['git'] = value
+        manifest_path.write_text(json.dumps(manifest))
+    files = project_files(catalog(workspace), 'cyclone')
+    assert len(files) == 3
+    assert files[0]['git'] is None
+    assert files[1]['git'] == provenance
+    assert files[2]['git'] is None
+
+
+def test_shared_vault_builds_keep_history_and_provenance(workspace):
+    provenance = {'commit': 'b' * 40, 'message': 'Adjust connector',
+                  'committed_at': '2026-10-10T00:00:00Z', 'dirty': False}
+    for hour in (1, 2):
+        build_id = f'20261010T{hour:02}0000000000Z-aaaaaaaaaaaa'
+        output = workspace / 'vault/out/builds' / build_id
+        make_export(workspace / 'vault', output=output)
+        data = json.loads((output / 'build.json').read_text())
+        data.update(schema='cad-build-v1', build_id=build_id, passed=True,
+                    git=provenance, checksums=data['files'])
+        (output / 'manifest.json').write_text(json.dumps(data))
+    (workspace / 'vault/out/latest-successful').symlink_to(output.relative_to(workspace / 'vault/out'))
+    index = catalog(workspace)
+    project = next(p for p in index.metadata()['projects'] if p['id'] == 'vault')
+    assert project['build_history'] is True
+    assert len(project['files']) == 6  # two old exports plus two per immutable build
+    linked = [f for f in project['files'] if f['git']]
+    assert len(linked) == 4
+    assert linked[0]['revision'].startswith('20261010T02')
+    assert all(f['git'] == provenance for f in linked)
+    selected = index.resolve('vault', project['default_file'])
+    assert selected.root == output
+    assert selected.read_bytes() == b'print-oriented'
+    # An unsuccessful common manifest must not fall back to build.json.
+    data['passed'] = False
+    (output / 'manifest.json').write_text(json.dumps(data))
+    assert len(project_files(index)) == 4

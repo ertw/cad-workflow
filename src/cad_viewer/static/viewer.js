@@ -279,32 +279,52 @@ function defaultFile(project) {
     return project?.files.find((file) => file.id === project.default_file) || project?.files[0] || null;
 }
 
+const expandedBuildGroups = new Set();
+
 function renderFiles() {
     const list = element("files-list");
     const query = element("file-search").value.trim().toLocaleLowerCase();
     const allFiles = currentProject?.files || [];
-    element("previous-designs-control").hidden = !allFiles.some((file) => file.historical);
-    const files = allFiles.filter((file) => !file.historical || element("previous-designs").checked);
-    const matching = files.filter((file) => [file.name, file.id, file.group, file.kind]
+    const files = allFiles;
+    const matching = files.filter((file) => [file.name, file.id, file.group, file.kind, file.git?.message, file.git?.commit]
         .some((value) => typeof value === "string" && value.toLocaleLowerCase().includes(query)));
     list.replaceChildren();
+    const noun = currentProject?.id === "cyclone" ? "build" : "file";
     text("file-count", currentProject
-        ? query ? `${matching.length} of ${files.length} files` : `${files.length} ${files.length === 1 ? "file" : "files"}`
+        ? query ? `${matching.length} of ${files.length} ${noun}s` : `${files.length} ${noun}${files.length === 1 ? "" : "s"}`
         : "");
     optionalText("project-status", !currentProject ? "Choose a project to browse its files."
         : !files.length ? "This project has no preview files yet."
             : !matching.length ? "No files match your search." : null);
     const groups = new Map();
     for (const file of matching) {
-        const group = file.group || "Files";
+        const group = (currentProject.build_history || currentProject.id === "cyclone") ? file.git?.commit || "Unlinked builds" : file.group || "Files";
         if (!groups.has(group)) groups.set(group, []);
         groups.get(group).push(file);
     }
-    for (const [name, filesInGroup] of groups) {
-        const section = document.createElement("section");
+    const buildHistory = (currentProject?.build_history || currentProject?.id === "cyclone");
+    const orderedGroups = [...groups].sort((a, b) => {
+        if (!buildHistory) return 0;
+        if (a[0] === "Unlinked builds") return 1;
+        if (b[0] === "Unlinked builds") return -1;
+        return (Date.parse(b[1][0].git.committed_at) || 0) - (Date.parse(a[1][0].git.committed_at) || 0);
+    });
+    for (const [name, filesInGroup] of orderedGroups) {
+        const section = document.createElement(buildHistory ? "details" : "section");
         section.className = "file-group";
-        const heading = document.createElement("h3");
-        heading.textContent = name;
+        const heading = document.createElement(buildHistory ? "summary" : "h3");
+        const provenance = filesInGroup[0].git;
+        heading.textContent = buildHistory && provenance
+            ? `${provenance.message.split("\n")[0] || "Untitled commit"} · ${provenance.commit.slice(0, 7)} · ${new Date(provenance.committed_at).toLocaleDateString()}` : name;
+        if (buildHistory) {
+            heading.title = provenance?.message || "These builds have no recorded Git provenance.";
+            section.open = Boolean(query) || expandedBuildGroups.has(name)
+                || filesInGroup.some((file) => file.id === currentFile?.id);
+            section.addEventListener("toggle", () => {
+                if (section.open) expandedBuildGroups.add(name);
+                else expandedBuildGroups.delete(name);
+            });
+        }
         const items = document.createElement("ul");
         for (const file of filesInGroup) {
             const item = document.createElement("li");
@@ -321,14 +341,21 @@ function renderFiles() {
             if (file.kind) {
                 const kind = document.createElement("span");
                 kind.className = "file-kind";
-                kind.textContent = file.kind;
+                kind.textContent = buildHistory ? file.git ? file.git.dirty ? "Uncommitted changes" : "Clean checkout" : "Git provenance unavailable" : file.kind;
                 button.append(kind);
             }
             button.addEventListener("click", () => chooseFile(currentProject, file));
             item.append(button);
             items.append(item);
         }
-        section.append(heading, items);
+        section.append(heading);
+        if (buildHistory && provenance?.message.includes("\n")) {
+            const description = document.createElement("p");
+            description.className = "commit-message";
+            description.textContent = provenance.message.split("\n").slice(1).join("\n").trim();
+            section.append(description);
+        }
+        section.append(items);
         list.append(section);
     }
 }
@@ -413,7 +440,6 @@ function followLocation() {
     const project = projectId !== null ? projects.find((item) => item.id === projectId)
         : fileId === null ? projects.find((item) => item.id === "cyclone") || projects[0] : null;
     const file = fileId !== null ? project?.files.find((item) => item.id === fileId) : defaultFile(project);
-    element("previous-designs").checked = Boolean(file?.historical);
     if ((projectId !== null && !project) || (fileId !== null && !file)) {
         currentProject = project || null;
         currentFile = null;
@@ -466,14 +492,11 @@ async function loadCatalog() {
                 if (!file || typeof file.id !== "string" || !file.id || fileIds.has(file.id)
                     || typeof file.revision !== "string" || !file.revision) throw new Error("The file list could not be read.");
                 fileIds.add(file.id);
-                const historical = project.id === "cyclone" && /^Configuration [a-f0-9]{8}$/.test(file.name);
                 const stamp = file.revision.match(/^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})/);
                 const saved = stamp ? new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" })
                     .format(new Date(`${stamp[1]}-${stamp[2]}-${stamp[3]}T${stamp[4]}:${stamp[5]}:${stamp[6]}Z`)) : file.revision;
-                return { ...file, historical,
-                    name: historical ? `Saved assembly · ${saved}`
-                        : project.id === "cyclone" && file.name === "Baseline" ? "Baseline · full assembly" : file.name || file.id,
-                    group: historical ? "Previous designs" : file.group,
+                return { ...file,
+                    name: (project.build_history || project.id === "cyclone") ? `${file.name || "Assembly"} · ${stamp ? saved : "Legacy export"}` : file.name || file.id,
                 };
             }) };
         });
@@ -507,7 +530,6 @@ element("project-select").addEventListener("change", () => {
     void chooseFile(project, defaultFile(project));
 });
 element("file-search").addEventListener("input", renderFiles);
-element("previous-designs").addEventListener("change", renderFiles);
 element("refresh-projects").addEventListener("click", () => loadCatalog());
 element("retry-scene").addEventListener("click", () => retryScene?.());
 window.addEventListener("popstate", () => {

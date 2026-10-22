@@ -87,7 +87,8 @@ def test_project_scene_keeps_downloads_on_requested_revision(builds, monkeypatch
     from cad_viewer import scenes
     files, root, identifiers = builds
     catalog = ProjectCatalog(root.parent, files)
-    file = catalog.metadata()['projects'][0]['files'][0]
+    file = next(item for item in catalog.metadata()['projects'][0]['files']
+                if item['revision'] == identifiers[0])
     monkeypatch.setattr(scenes, 'scene_for', lambda entry: json.dumps({
         'type': 'data', 'build_id': entry.build_id,
         'data': {'shapes': {'parts': []}},

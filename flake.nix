@@ -1,5 +1,5 @@
 {
-  description = "Standalone CAD preview (project-local, x86_64-linux)";
+  description = "Shared CAD builds and preview (project-local, x86_64-linux)";
   inputs.nixpkgs.url = "github:NixOS/nixpkgs/02e08985a27c65ffd33d434eeb2e660a2e4dc84d";
   outputs = { self, nixpkgs }: let
     system = "x86_64-linux";
@@ -18,7 +18,7 @@
       shellHook = ''
         export PATH="$PWD/.venv/bin:$PATH"
         export FONTCONFIG_FILE="${pkgs.fontconfig.out}/etc/fonts/fonts.conf"
-        echo "CAD viewer: run just setup once; just view serves the parent workspace on loopback."
+        echo "CAD tooling: run just setup once; just view serves ../projects on loopback."
       '';
     };
   };

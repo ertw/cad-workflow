@@ -3,7 +3,7 @@ set positional-arguments
 setup:
     uv sync --locked --no-install-project --python python3.12
 
-view port="3939" workspace="..":
+view port="3939" workspace="../projects":
     python -m cad_viewer view --port {{port}} --workspace "{{workspace}}"
 
 check:
