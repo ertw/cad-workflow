@@ -217,3 +217,33 @@ def test_vault_box_binding_and_identity(tmp_path):
     write(root / 'cad-builds.json', bindings)
     with pytest.raises(CatalogError, match='box adapter supports only'):
         load(root)
+
+
+@pytest.mark.parametrize('part_id', [
+    's4_box_1f_printed_screw', 's1f_facade_printed_screw', 's4_facade_screw',
+])
+def test_vault_printed_joint_binding_and_identity(tmp_path, part_id):
+    root = declare_vault(tmp_path / 'vault')
+    parts = json.loads((root / 'partcad.json').read_text())
+    parts['parts'][part_id] = {'type': 'build123d', 'desc': part_id, 'path': 'catalog/printed.py'}
+    write(root / 'partcad.json', parts)
+    (root / 'catalog/printed.py').write_text('# printed joint wrapper\n')
+    bindings = json.loads((root / 'cad-builds.json').read_text())
+    bindings['targets'][part_id] = {'object': f'parts/{part_id}', 'adapter': 'vault-printed-joint'}
+    write(root / 'cad-builds.json', bindings)
+    target = load(root).target(part_id)
+    assert target.configuration == part_id
+    assert target.matches({}, {'part': part_id}, [part_id])
+    assert not target.matches({}, {'part': 's4_box_1f'}, ['s4_box_1f'])
+    actions = BuildActions(index(tmp_path))
+    assert part_id in {item['id'] for item in actions.options({'project': 'vault'})[2]['options']}
+    bindings['targets'][part_id]['object'] = 'parts/s1f_facade'
+    write(root / 'cad-builds.json', bindings)
+    with pytest.raises(CatalogError, match='printed joint adapter supports only'):
+        load(root)
+    bindings['targets'][part_id]['object'] = f'parts/{part_id}'
+    write(root / 'cad-builds.json', bindings)
+    parts['parts'][part_id]['parameters'] = {'family': {'type': 'string', 'default': 'S'}}
+    write(root / 'partcad.json', parts)
+    with pytest.raises(CatalogError, match='printed joint adapter supports only'):
+        load(root)

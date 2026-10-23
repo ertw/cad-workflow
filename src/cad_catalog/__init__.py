@@ -194,6 +194,19 @@ def load(root):
             if object_id != 's1f_facade' or values:
                 raise CatalogError(f'targets.{name}: facade adapter supports only s1f_facade')
             configuration = 's1f_facade'
+        elif adapter == 'vault-printed-joint' and group == 'parts':
+            if object_id not in {'s4_box_1f_printed_screw', 's1f_facade_printed_screw',
+                                 's4_facade_screw'} or values:
+                raise CatalogError(f'targets.{name}: printed joint adapter supports only the fixed S4 1F parts')
+            configuration = object_id
+        elif adapter == 'vault-geared-rails' and group == 'assemblies':
+            required = {'s_geared_rail_plain': False, 's_geared_rail_retained': True}
+            if object_id != 's_geared_rails' or set(components) != set(required):
+                raise CatalogError(f'targets.{name}: geared rails adapter requires the two S rail variants')
+            if any(parameters[part] != {'retained': retained}
+                   for part, retained in required.items()):
+                raise CatalogError(f'targets.{name}: geared rail variants require their fixed retained flag')
+            configuration = object_id
         elif adapter == 'cyclone-preset' and group == 'assemblies':
             preset = local_file(root, spec.get('preset'))
             if preset.parent != root / 'presets' or preset.suffix != '.toml':
