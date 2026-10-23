@@ -105,3 +105,7 @@ The vendored package schema repeats some keys. It is preserved byte-for-byte and
 loaded with ordinary JSON last-key semantics, matching upstream's loader. Our
 project documents reject duplicate keys and non-finite numbers. Schema references
 resolve locally; validation never fetches remote schemas.
+
+The `vault-box` adapter builds the native `s4_box_1f` tray. It accepts only
+that part identity and no catalog parameters, and dispatches the Vault build
+preview configuration `s4_box_1f` through the same immutable storage workflow.

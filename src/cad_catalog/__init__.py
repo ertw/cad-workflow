@@ -186,6 +186,10 @@ def load(root):
             if object_id != f'{family.lower()}{depth}_module_{height}f':
                 raise CatalogError(f'targets.{name}: part identity must match module dimensions')
             configuration = f'{family}-{depth}-{height}'
+        elif adapter == 'vault-box' and group == 'parts':
+            if object_id != 's4_box_1f' or values:
+                raise CatalogError(f'targets.{name}: box adapter supports only s4_box_1f')
+            configuration = 's4_box_1f'
         elif adapter == 'vault-facade' and group == 'parts':
             if object_id != 's1f_facade' or values:
                 raise CatalogError(f'targets.{name}: facade adapter supports only s1f_facade')

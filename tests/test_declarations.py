@@ -197,3 +197,23 @@ def test_declarations_are_snapshotted_and_build_identity_is_recorded(tmp_path):
     finally:
         catalog_target.reset(token)
     assert json.loads((destination / 'manifest.json').read_text())['catalog_target'] == target
+
+
+def test_vault_box_binding_and_identity(tmp_path):
+    root = declare_vault(tmp_path / 'vault')
+    parts = json.loads((root / 'partcad.json').read_text())
+    parts['parts']['s4_box_1f'] = {'type': 'build123d', 'desc': 'S4 Box 1F', 'path': 'catalog/box.py'}
+    write(root / 'partcad.json', parts)
+    (root / 'catalog/box.py').write_text('# box wrapper\n')
+    bindings = json.loads((root / 'cad-builds.json').read_text())
+    bindings['targets']['s4_box_1f'] = {'object': 'parts/s4_box_1f', 'adapter': 'vault-box'}
+    write(root / 'cad-builds.json', bindings)
+    target = load(root).target('s4_box_1f')
+    assert target.configuration == 's4_box_1f'
+    assert target.label == 'S4 Box 1F'
+    assert target.matches({}, {'part': 's4_box_1f'}, ['s4_box_1f'])
+    assert not target.matches({}, {'part': 's4_module_1f'}, ['s4_module_1f'])
+    bindings['targets']['s4_box_1f']['object'] = 'parts/s1f_facade'
+    write(root / 'cad-builds.json', bindings)
+    with pytest.raises(CatalogError, match='box adapter supports only'):
+        load(root)
