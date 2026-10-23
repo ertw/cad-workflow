@@ -20,8 +20,8 @@
           <label class="eyebrow" for="project-select">PROJECT</label>
           <select id="project-select" disabled><option value="">Loading projects…</option></select>
           <p id="working-tree-status" class="working-tree-status muted" role="status" hidden></p>
-          <label class="eyebrow files-label" for="file-search">FILES & CONFIGURATIONS</label>
-          <input id="file-search" type="search" placeholder="Find a file…" autocomplete="off" disabled>
+          <label class="eyebrow files-label" for="file-search">BUILD HISTORY</label>
+          <input id="file-search" type="search" placeholder="Find a saved build…" autocomplete="off" disabled>
           <div class="file-summary"><p id="file-count" class="muted" role="status"></p><button id="refresh-projects" class="retry" type="button" disabled>Refresh</button></div>
         </div>
         <section id="preview-build" class="git-panel" aria-label="Build preview" hidden>
@@ -31,6 +31,13 @@
           <progress id="build-progress" aria-label="Build in progress" hidden></progress>
           <p id="build-preview-status" role="status"></p>
           <pre id="build-output" aria-label="Build output" hidden></pre>
+        </section>
+        <section id="latest-parts" class="latest-parts" aria-labelledby="latest-parts-heading">
+          <h2 id="latest-parts-heading">Parts</h2>
+          <p class="muted">Build freshness: green is current, yellow means source changed. Build freshness does not indicate review.</p>
+          <p id="catalog-status" class="error" role="status" hidden></p>
+          <ul id="latest-parts-list"></ul>
+          <p id="latest-parts-empty" class="muted">No parts declared.</p>
         </section>
         <details id="git-panel" class="git-panel">
           <summary>Stage & commit changes</summary>

@@ -1,9 +1,7 @@
 """Build known project configurations and stream output to the requesting viewer."""
-import hashlib
 import json
 import os
 from pathlib import Path
-import re
 import selectors
 import signal
 import subprocess
@@ -27,32 +25,10 @@ class BuildActions:
             if root is None:
                 raise ValueError('Unknown project.')
             entry = self.catalog.resolve(project, data['file'], data.get('revision')) if data.get('file') else None
-        if project == 'vault':
-            if entry and entry.kind == 'assembly':
-                parameters = json.loads((entry.path / 'resolved-parameters.json').read_text())
-                family, depth, height = parameters['family'], parameters['depth_units'], parameters['height_units']
-            else:
-                name = entry.path.name if entry else 's4_module_1f.stl'
-                match = re.match(r'(xl|s|m|l)(\d+)_module_(\d+)f(?:_model)?\.stl$', name)
-                if not match:
-                    raise ValueError('Cannot determine the Vault size from this file. Select a module export.')
-                family, depth, height = match.groups()
-            if family.upper() not in ('S', 'M', 'L', 'XL') or not 3 <= int(depth) <= 100 or not 1 <= int(height) <= 100:
-                raise ValueError('Unsupported module size.')
-            key = f'{family.upper()}-{depth}-{height}'
-            options = [{'id': key, 'label': f'{family.upper()}{depth} Module {height}F'}]
-            default = key
-        else:
-            options = [{'id': p.name, 'label': p.stem.replace('_', ' ').title()}
-                       for p in sorted((root / 'presets').glob('*.toml'))
-                       if p.resolve().is_relative_to(root) and p.is_file()]
-            default = 'baseline.toml' if any(p['id'] == 'baseline.toml' for p in options) else None
-            if entry:
-                manifest = json.loads((entry.path / 'manifest.json').read_text())
-                matches = [p['id'] for p in options if hashlib.sha256(
-                    (root / 'presets' / p['id']).read_bytes()).hexdigest() == manifest.get('input_file_hash')]
-                # Don't silently substitute baseline for an edited or removed preset.
-                default = matches[0] if len(matches) == 1 else None
+        from cad_catalog import load
+        declaration = load(root)
+        options = [{'id': target.id, 'label': target.label} for target in declaration.targets]
+        default = declaration.default
         return root, entry, {'options': options, 'default': default}
 
     def command(self, data, receipt):
@@ -60,13 +36,19 @@ class BuildActions:
         configuration = data.get('configuration')
         if configuration not in [p['id'] for p in options['options']]:
             raise ValueError('Choose a build configuration.')
+        from cad_catalog import load
+        target = load(root).target(configuration)
+        expected = 'vault' if target.adapter.startswith('vault-') else 'cyclone'
+        if data['project'] != expected:
+            raise ValueError('Build adapter does not match this project.')
         python = root / '.venv/bin/python'
         if not python.is_file():
             raise ValueError('Project environment missing. Run the project setup command first.')
         env = {**os.environ, 'PYTHONPATH': os.pathsep.join([str(root / 'src'), str(Path(__file__).resolve().parents[1])]), 'PYTHONUNBUFFERED': '1',
                'MPLCONFIGDIR': str(root / '.cache/matplotlib')}
         return root, entry, [str(python), '-u', '-m', 'cad_build.runner', data['project'],
-                             configuration, '--receipt', str(receipt)], env
+                             target.configuration, '--receipt', str(receipt),
+                             '--catalog-target', target.id, '--catalog-object', target.object], env
 
     def result(self, project, root, entry, receipt):
         destination = Path(receipt.read_text()).resolve()

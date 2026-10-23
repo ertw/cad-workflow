@@ -114,10 +114,16 @@ the service's filesystem permissions and requires administrator approval.
 
 ### Build a preview
 
-Use **Build preview** in the project sidebar to build the current source. Vault
-keeps the selected module size; Cyclone offers the current presets and selects the
-one matching the displayed build when possible. If that preset has changed or is
-missing, choose a configuration explicitly.
+Use **Build preview** in the project sidebar to build a declared configuration.
+`partcad.json` lists maintained parts and assemblies; `cad-builds.json` binds them
+to the existing project builders. The picker works before the first build and
+independently of the displayed historical file. Vault initially declares S4
+Module 1F and S1F Facade; Cyclone declares the baseline assembly and its parts.
+See [JSON catalogs](docs/catalogs.md) for the supported schema and validation.
+
+The Parts list survives removal of generated output. Other saved exports remain
+available in Build history. Build freshness is separate from human review;
+existing builds are not automatically marked reviewed.
 
 The viewer streams build output and displays an activity indicator while the
 previous model remains visible. Successful builds automatically open the exact

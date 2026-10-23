@@ -7,6 +7,7 @@ from types import SimpleNamespace
 import pytest
 from cad_viewer.build_actions import BuildActions
 from cad_build import run_build, verify_files
+from test_declarations import declare_vault, declare_cyclone
 
 
 def test_shared_pipeline_publishes_metadata_and_aliases(tmp_path):
@@ -28,8 +29,7 @@ def test_commands_share_runner_and_preserve_configuration(tmp_path, project):
     root = tmp_path / project
     (root / '.venv/bin').mkdir(parents=True)
     (root / '.venv/bin/python').symlink_to(sys.executable)
-    (root / 'presets').mkdir()
-    (root / 'presets/baseline.toml').write_text('example')
+    (declare_vault if project == 'vault' else declare_cyclone)(root)
     catalog = SimpleNamespace(_lock=RLock(), _scan=lambda: None, _project_roots={project: root})
     actions = BuildActions(catalog)
     data = {'project': project}

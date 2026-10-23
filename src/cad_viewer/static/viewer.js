@@ -371,10 +371,12 @@ function updateLocation(project, file, replace = false) {
 }
 
 function defaultFile(project) {
-    return project?.files.find((file) => file.id === project.default_file) || project?.files[0] || null;
+    const selected = project?.files.find((file) => file.id === project.default_file);
+    return selected || (project?.catalog_declared ? null : project?.files[0]) || null;
 }
 
 const expandedBuildGroups = new Set();
+const selectedBuildTargets = new Map();
 
 let workingTreeRequest = null;
 let workingTreeProject = null;
@@ -396,15 +398,22 @@ async function refreshWorkingTree() {
     const request = new AbortController();
     workingTreeRequest = request;
     let state = "unavailable";
+    let latestParts = null;
     try {
         const response = await fetch(`/api/projects/${encodeURIComponent(projectId)}/working-tree`,
             { signal: request.signal });
         if (!response.ok) throw new Error("Status unavailable");
-        state = (await response.json()).state;
+        const result = await response.json();
+        state = result.state;
+        latestParts = result.latest_parts;
     } catch (error) {
         if (error.name === "AbortError") return;
     }
     if (workingTreeRequest !== request || currentProject?.id !== projectId) return;
+    if (latestParts) {
+        currentProject.latest_parts = latestParts;
+        renderLatestParts();
+    }
     badge.dataset.state = state;
     badge.textContent = state === "dirty" ? "Uncommitted changes"
         : state === "clean" ? "No uncommitted changes" : "Working tree status unavailable";
@@ -418,7 +427,59 @@ window.addEventListener("focus", () => {
     if (catalogMode) void refreshWorkingTree();
 });
 
+function renderLatestParts() {
+    const list = element("latest-parts-list");
+    const latest = currentProject?.latest_parts || [];
+    text("latest-parts-heading", currentProject?.catalog_declared ? "Parts" : "Saved parts");
+    optionalText("catalog-status", currentProject?.catalog_error || null);
+    const signature = JSON.stringify([currentProject?.id, currentFile?.id, latest]);
+    if (list.dataset.signature === signature) return;
+    list.dataset.signature = signature;
+    list.replaceChildren();
+    element("latest-parts-empty").hidden = latest.length > 0;
+    for (const part of latest) {
+        const file = currentProject.files.find(file => file.id === part.file_id);
+        const project = currentProject;
+        const item = document.createElement("li");
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "file-button";
+        const status = part.state === "current" ? "Up to date"
+            : part.state === "changed" ? "Changes since build"
+                : part.state === "missing" ? "No matching build" : "Build status unavailable";
+        button.title = `${status}. Compared against project source and build inputs.${part.revision ? `\n${part.revision}` : ""}`;
+        button.setAttribute("aria-label", `${part.label || part.name}: ${status}. ${file ? "View latest build" : "Select build configuration"}`);
+        const title = document.createElement("span");
+        title.className = "latest-part-title";
+        const dot = document.createElement("span");
+        dot.className = "build-dot";
+        dot.dataset.state = part.state;
+        dot.setAttribute("aria-hidden", "true");
+        const name = document.createElement("span");
+        name.className = "file-name";
+        name.textContent = part.label || part.name.replaceAll("_", " ");
+        title.append(dot, name);
+        const detail = document.createElement("span");
+        detail.className = "file-kind";
+        const date = /^(\d{4})(\d{2})(\d{2})T/.exec(part.revision || "");
+        detail.textContent = `${status}${date ? ` · ${date[1]}-${date[2]}-${date[3]}` : ""}`;
+        if (part.review_state === "unrecorded") detail.textContent += " · Review not recorded";
+        button.append(title, detail);
+        button.addEventListener("click", async () => {
+            if (part.target_id) selectedBuildTargets.set(project.id, part.target_id);
+            buildOptionsKey = null;
+            await chooseFile(project, file || null);
+            if (file && currentProject === project && currentFile === file && activeAsset?.file === file.id) {
+                selectPart(part.component);
+            }
+        });
+        item.append(button);
+        list.append(item);
+    }
+}
+
 function renderFiles() {
+    renderLatestParts();
     void syncBuildOptions();
     syncGitProject();
     void refreshWorkingTree();
@@ -518,7 +579,9 @@ async function chooseFile(project, file, { replace = false, navigate = true } = 
     document.title = file ? [file.name, file.group, project.name, "Workshop"].filter(Boolean).join(" · ")
         : "Workshop · CAD & print files";
     if (!file) {
-        sceneState("empty", "No files yet", "This project has no preview files available.");
+        sceneState("empty", project?.catalog_declared ? "No preview selected" : "No files yet",
+            project?.catalog_declared ? "Select a part and build its preview, or open a saved build from history."
+                : "This project has no preview files available.");
         return;
     }
     sceneState("loading", "Loading preview…", [project.name, file.group, file.name].filter(Boolean).join(" / "));
@@ -1028,11 +1091,11 @@ function updateBuildButton() {
 }
 async function syncBuildOptions(preserveStatus = false) {
     const payload = { project: currentProject?.id, file: currentFile?.id, revision: currentFile?.revision };
-    const key = JSON.stringify(payload);
+    const key = JSON.stringify([payload, currentProject?.catalog_revision]);
     if (buildBusy || key === buildOptionsKey) return;
     buildOptionsKey = key;
     const version = ++buildOptionsVersion;
-    const supported = ["vault", "cyclone"].includes(payload.project);
+    const supported = currentProject?.catalog_declared && ["vault", "cyclone"].includes(payload.project);
     element("preview-build").hidden = !supported;
     element("build-configuration").replaceChildren();
     updateBuildButton();
@@ -1046,8 +1109,10 @@ async function syncBuildOptions(preserveStatus = false) {
         placeholder.disabled = true;
         select.append(placeholder);
         for (const option of result.options) select.append(new Option(option.label, option.id));
-        select.value = result.default || "";
-        if (!preserveStatus) text("build-preview-status", "Builds the current project source. The displayed preview stays visible during the build.");
+        const preferred = selectedBuildTargets.get(payload.project);
+        select.value = result.options.some(option => option.id === preferred) ? preferred : result.default || "";
+        selectedBuildTargets.set(payload.project, select.value);
+        if (!preserveStatus) text("build-preview-status", "");
     } catch (error) {
         if (version === buildOptionsVersion) {
             buildOptionsKey = null;
@@ -1055,7 +1120,10 @@ async function syncBuildOptions(preserveStatus = false) {
         }
     } finally { if (version === buildOptionsVersion) updateBuildButton(); }
 }
-element("build-configuration").addEventListener("change", updateBuildButton);
+element("build-configuration").addEventListener("change", () => {
+    selectedBuildTargets.set(currentProject.id, element("build-configuration").value);
+    updateBuildButton();
+});
 element("build-preview").addEventListener("click", async () => {
     if (buildBusy || agentBusy || !element("build-configuration").value) return;
     const payload = { project: currentProject.id, file: currentFile?.id, revision: currentFile?.revision,

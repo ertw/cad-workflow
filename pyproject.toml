@@ -4,6 +4,7 @@ version = "0.1.0"
 description = "Shared immutable CAD builds and loopback project preview"
 requires-python = ">=3.12,<3.13"
 dependencies = [
+  "jsonschema==4.26.0",
   "build123d==0.13.0",
   "cadquery-ocp-novtk==8.0.1.1.0",
   "ocp-viewer==1.1.3",

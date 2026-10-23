@@ -8,6 +8,8 @@ import re
 import subprocess
 from threading import RLock
 
+from cad_catalog import CatalogError, load as load_declaration
+
 
 SAFE_ID = re.compile(r'[A-Za-z0-9_-]+')
 SHA256 = re.compile(r'[a-f0-9]{64}')
@@ -65,6 +67,7 @@ class CatalogEntry:
     print_note: str = 'Build export; print orientation is not recorded.'
     status: str = 'Completed CAD build'
     units: str = 'mm'
+    part_names: tuple = ()
     checksum: str | None = field(default=None, repr=False)
     fingerprint: tuple | None = field(default=None, repr=False)
 
@@ -129,6 +132,9 @@ class ProjectCatalog:
         self._project_names = {}
         self._project_roots = {}
         self._defaults = {}
+        self._declarations = {}
+        self._catalog_errors = {}
+        self._declared_projects = set()
         self._lock = RLock()
 
     def metadata(self):
@@ -149,7 +155,20 @@ class ProjectCatalog:
             else:
                 files.sort(key=lambda item: (item['group'].casefold(), item['name'].casefold(), item['id']))
             project = {'id': project_id, 'name': name, 'files': files,
-                       'default_file': self._defaults.get(project_id, files[0]['id'] if files else None)}
+                       'default_file': self._defaults.get(project_id, files[0]['id'] if files else None),
+                       'latest_parts': self.latest_parts(project_id)}
+            if project_id in self._declared_projects:
+                declaration = self._declarations.get(project_id)
+                project['catalog_declared'] = True
+                project['catalog_error'] = self._catalog_errors.get(project_id)
+                project['catalog_revision'] = declaration.revision if declaration else None
+                project['catalog_targets'] = ([{'id': t.id, 'label': t.label} for t in declaration.targets]
+                                              if declaration else [])
+                # A historical/experimental export must not become the catalog default.
+                default = next((part for part in project['latest_parts']
+                                if declaration and part['target_id'] == declaration.default
+                                and part['file_id']), None)
+                project['default_file'] = default['file_id'] if default else None
             if history:
                 project['build_history'] = True
             projects.append(project)
@@ -168,6 +187,103 @@ class ProjectCatalog:
                 entry = pinned
             return entry
 
+    def latest_parts(self, project_id):
+        """Latest successful artifact for each part, compared to build inputs.
+
+        Source dependencies are recorded project-wide, so a source change marks
+        all affected builds stale rather than guessing per-part dependencies.
+        """
+        from cad_build import source_hashes
+
+        with self._lock:
+            if project_id in self._declared_projects:
+                return self._declared_latest_parts(project_id)
+            entries = sorted((e for e in self._entries.values() if e.project_id == project_id),
+                             key=lambda e: (bool(e.build_id), e.build_id or '', e.id), reverse=True)
+            latest = {}
+            for entry in entries:
+                names = entry.part_names if entry.kind == 'assembly' else (
+                    () if entry.path.stem.endswith('_model') else (entry.path.stem,))
+                for name in names:
+                    latest.setdefault(name, entry)
+            if not latest:
+                return []
+            root = self._project_roots[project_id]
+            try:
+                current = source_hashes(root)
+                presets = {hashlib.sha256(_confined(p, root.resolve()).read_bytes()).hexdigest()
+                           for p in (root / 'presets').glob('*.toml')}
+            except (OSError, ValueError):
+                current, presets = None, set()
+            states = {}
+            result = []
+            for name, entry in sorted(latest.items()):
+                if entry.id not in states:
+                    state = 'unknown'
+                    try:
+                        path = entry.path if entry.kind == 'assembly' else entry.path.parent
+                        manifest = json.loads(_confined(path / 'manifest.json', entry.root).read_text())
+                        recorded = manifest.get('source_files')
+                        if current is not None and isinstance(recorded, dict) and recorded:
+                            state = 'current' if current == recorded else 'changed'
+                            if manifest.get('input_file_hash') and manifest['input_file_hash'] not in presets:
+                                state = 'changed'
+                    except (OSError, ValueError, TypeError):
+                        pass
+                    states[entry.id] = state
+                result.append({'name': name, 'file_id': entry.id, 'revision': entry.revision,
+                               'configuration': entry.name if entry.kind == 'assembly' else entry.group,
+                               'component': name if entry.kind == 'assembly' else entry.id,
+                               'state': states[entry.id]})
+            return result
+
+    def _declared_latest_parts(self, project_id):
+        from cad_build import source_hashes
+
+        declaration = self._declarations.get(project_id)
+        if declaration is None:
+            return []
+        root = self._project_roots[project_id]
+        current = source_hashes(root)
+        entries = sorted((e for e in self._entries.values() if e.project_id == project_id),
+                         key=lambda e: (bool(e.build_id), e.build_id or '', e.id), reverse=True)
+        builds = []
+        for entry in entries:
+            if entry.kind == 'stl' and entry.path.stem.endswith('_model'):
+                continue
+            directory = entry.path if entry.kind == 'assembly' else entry.path.parent
+            try:
+                name = 'manifest.json' if entry.build_id else 'build.json'
+                manifest = json.loads(_confined(directory / name, entry.root).read_text())
+                parameters_path = directory / 'resolved-parameters.json'
+                parameters = (json.loads(_confined(parameters_path, entry.root).read_text())
+                              if parameters_path.exists() else {})
+                if not isinstance(manifest, dict) or not isinstance(parameters, dict):
+                    continue
+                names = entry.part_names if entry.kind == 'assembly' else (entry.path.stem,)
+                builds.append((entry, manifest, parameters, names))
+            except (OSError, ValueError, TypeError):
+                continue
+        result = []
+        for target in declaration.targets:
+            for name in target.components:
+                match = next(((entry, manifest) for entry, manifest, parameters, names in builds
+                              if name in names and target.matches(manifest, parameters, names)), None)
+                entry, manifest = match if match else (None, {})
+                recorded = manifest.get('source_files')
+                state = 'missing' if entry is None else 'unknown'
+                if entry and isinstance(recorded, dict) and recorded:
+                    state = 'current' if recorded == current else 'changed'
+                    if target.input_hash and target.input_hash != manifest.get('input_file_hash'):
+                        state = 'changed'
+                result.append({'name': name, 'label': declaration.parts[name].get('desc', name),
+                               'target_id': target.id, 'configuration': target.label,
+                               'file_id': entry.id if entry else None,
+                               'revision': entry.revision if entry else None,
+                               'component': name if entry and entry.kind == 'assembly' else entry.id if entry else None,
+                               'state': state, 'review_state': 'unrecorded'})
+        return result
+
     def working_tree(self, project_id):
         """Read current changes independently of saved build provenance."""
         with self._lock:
@@ -183,8 +299,9 @@ class ProjectCatalog:
                 capture_output=True, timeout=5, check=True,
             )
         except (OSError, subprocess.SubprocessError):
-            return {'state': 'unavailable'}
-        return {'state': 'dirty' if result.stdout else 'clean'}
+            return {'state': 'unavailable', 'latest_parts': self.latest_parts(project_id)}
+        return {'state': 'dirty' if result.stdout else 'clean',
+                'latest_parts': self.latest_parts(project_id)}
 
     def download(self, project_id, file_id, revision, format, filename=None):
         if not revision or format not in ('stl', '3mf'):
@@ -209,6 +326,9 @@ class ProjectCatalog:
         self._revisions = {}
         self._project_names = {}
         self._defaults = {}
+        self._declarations = {}
+        self._catalog_errors = {}
+        self._declared_projects = set()
         self._cyclone()
         if not self.workspace.is_dir():
             return
@@ -226,10 +346,18 @@ class ProjectCatalog:
                 has_metadata = True
             except OSError:
                 has_metadata = False
-            if not (has_metadata or has_output):
+            declared = any((project / name).exists() or (project / name).is_symlink()
+                           for name in ('partcad.json', 'cad-builds.json'))
+            if not (has_metadata or has_output or declared):
                 continue
             self._project_roots[project_id] = boundary
             self._project_names.setdefault(project_id, project.name.replace('_', ' ').title())
+            if declared:
+                self._declared_projects.add(project_id)
+                try:
+                    self._declarations[project_id] = load_declaration(boundary)
+                except (CatalogError, OSError, RuntimeError) as error:
+                    self._catalog_errors[project_id] = str(error)
             if project_id != 'cyclone':
                 for entry in self._exports(project, project_id):
                     self._record(entry)
@@ -264,7 +392,8 @@ class ProjectCatalog:
                                      name, 'Configurations', 'assembly', candidate.name, path,
                                      path.resolve(), git=provenance, build_id=candidate.name,
                                      print_note='Part downloads use their recorded print orientation.',
-                                     status=metadata['status'], units=metadata['units'])
+                                     status=metadata['status'], units=metadata['units'],
+                                   part_names=tuple(part['name'] for part in metadata['parts']))
                 self._record(entry)
                 self._project_names['cyclone'] = 'Cyclone'
                 self._project_roots['cyclone'] = project_root
@@ -313,7 +442,8 @@ class ProjectCatalog:
                                    'Configurations', 'assembly', build_id, output, output_boundary,
                                    git=_provenance(manifest), build_id=build_id,
                                    print_note=manifest.get('print_orientation', ''),
-                                   status=metadata['status'], units=metadata['units'])
+                                   status=metadata['status'], units=metadata['units'],
+                                   part_names=tuple(part['name'] for part in metadata['parts']))
                 return
             if not (manifest.get('cad_valid') is True and manifest.get('solids') == 1
                     and manifest.get('stl_watertight') is True

@@ -127,7 +127,7 @@ def test_project_without_completed_exports_remains_visible(tmp_path, marker):
     else:
         (project / marker).write_text('[project]\nname = "vault"\n')
     assert catalog(tmp_path).metadata()['projects'] == [
-        {'id': 'vault', 'name': 'Vault', 'files': [], 'default_file': None}]
+        {'id': 'vault', 'name': 'Vault', 'files': [], 'default_file': None, 'latest_parts': []}]
 
 
 def test_all_successful_builds_are_selectable_newest_first(workspace):
@@ -380,3 +380,74 @@ def test_step_assembly_in_another_project(tmp_path):
     assert entry.kind == 'assembly'
     assert entry.path == target
     assert _file_metadata(entry, catalog.build_files)['build_id'] == target.name
+
+
+def test_latest_parts_selects_newest_build_per_part(workspace):
+    from cad_viewer.catalog import CatalogEntry
+
+    index = catalog(workspace)
+    root = workspace / 'vault'
+    index._project_roots['vault'] = root
+    for build_id, names in [('20261010T010000000000Z-' + 'a' * 12, ('shared', 'old_only')),
+                            ('20261011T010000000000Z-' + 'b' * 12, ('shared', 'new_only'))]:
+        path = root / 'out/builds' / build_id
+        path.mkdir(parents=True)
+        index._record(CatalogEntry('vault', build_id, 'Assembly', 'Configurations',
+                                   'assembly', build_id, path, path,
+                                   build_id=build_id, part_names=names))
+    parts = {p['name']: p for p in index.latest_parts('vault')}
+    assert set(parts) == {'shared', 'old_only', 'new_only'}
+    assert parts['shared']['revision'].startswith('20261011')
+    assert parts['old_only']['revision'].startswith('20261010')
+    assert parts['shared']['component'] == 'shared'
+    assert all(p['state'] == 'unknown' for p in parts.values())
+
+
+def test_latest_parts_compares_source_contents_and_inputs(workspace):
+    from cad_build import source_hashes
+    from cad_viewer.catalog import CatalogEntry
+
+    root = workspace / 'vault'
+    source = root / 'src/model.py'
+    source.parent.mkdir()
+    source.write_text('original')
+    preset = root / 'presets/example.toml'
+    preset.parent.mkdir()
+    preset.write_text('size = 1')
+    build_id = '20261010T010000000000Z-' + 'a' * 12
+    path = root / 'out/builds' / build_id
+    path.mkdir(parents=True)
+    (path / 'manifest.json').write_text(json.dumps({
+        'source_files': source_hashes(root), 'input_file_hash': digest(preset.read_bytes()),
+    }))
+    index = catalog(workspace)
+    index._project_roots['vault'] = root
+    index._record(CatalogEntry('vault', 'build', 'Assembly', 'Configurations',
+                               'assembly', build_id, path, path,
+                               build_id=build_id, part_names=('part',)))
+    def state():
+        return index.latest_parts('vault')[0]['state']
+
+    assert state() == 'current'
+    source.write_text('edited')
+    assert state() == 'changed'
+    source.write_text('original')
+    assert state() == 'current'
+    added = root / 'src/new.py'
+    added.write_text('new dependency')
+    assert state() == 'changed'
+    added.unlink()
+    assert state() == 'current'
+    source.unlink()
+    assert state() == 'changed'
+    source.write_text('original')
+    preset.write_text('size = 2')
+    assert state() == 'changed'
+    preset.write_text('size = 1')
+    assert state() == 'current'
+
+
+def test_latest_parts_excludes_duplicate_model_orientation(workspace):
+    project = next(p for p in catalog(workspace).metadata()['projects'] if p['id'] == 'vault')
+    assert [p['name'] for p in project['latest_parts']] == ['drawer']
+    assert project['latest_parts'][0]['file_id'] in {f['id'] for f in project['files']}

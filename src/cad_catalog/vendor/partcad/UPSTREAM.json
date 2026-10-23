@@ -1,0 +1,19 @@
+{
+  "repository": "https://github.com/partcad/partcad",
+  "tag": "0.8.232",
+  "commit": "354ed5201e831b867ce0eb9637a234ea3f3ec692",
+  "files": {
+    "partcad.json": {
+      "source": "src/partcad_utils/schema/partcad.json",
+      "sha256": "ea99f2fcda30c074c14212258f1db35b2fed1ed50046e22718a9dc10104297f2"
+    },
+    "assy.json": {
+      "source": "src/partcad_utils/schema/assy.json",
+      "sha256": "2c8a6d0488e1da60afeb11ca4ed6d6a0d89dd578c38b955c8f03de8e0bf59195"
+    },
+    "LICENSE.txt": {
+      "source": "LICENSE.txt",
+      "sha256": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4"
+    }
+  }
+}

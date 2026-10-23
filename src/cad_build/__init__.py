@@ -1,5 +1,6 @@
 """Shared immutable build storage; geometry and validation belong to each project."""
 from datetime import datetime, timezone
+from contextvars import ContextVar
 import hashlib
 import json
 import os
@@ -9,16 +10,20 @@ import uuid
 from .provenance import git_provenance
 
 
+catalog_target = ContextVar('catalog_target', default=None)
+
+
 def write_json(path, data):
     Path(path).write_text(json.dumps(data, indent=2, sort_keys=True, allow_nan=False) + '\n')
 
 
 def source_paths(root):
     root = Path(root)
-    paths = {str(p.relative_to(root)): p for directory in ('src', 'tests')
+    paths = {str(p.relative_to(root)): p for directory in ('src', 'tests', 'catalog')
              for p in (root / directory).rglob('*')
              if p.is_file() and p.suffix in {'.py', '.html', '.js', '.css', '.json', '.c'}}
-    for name in ('pyproject.toml', 'uv.lock', 'flake.nix', 'flake.lock', 'justfile'):
+    for name in ('pyproject.toml', 'uv.lock', 'flake.nix', 'flake.lock', 'justfile',
+                 'partcad.json', 'cad-builds.json'):
         if (root / name).is_file():
             paths[name] = root / name
     paths.update({f'_build_system/{p.name}': p for p in Path(__file__).parent.glob('*.py')})
@@ -156,6 +161,8 @@ def run_build(root, configuration_hash, generate, *, parameters, inputs=None,
         print('Writing preview metadata and publishing validated artifacts', flush=True)
         write_json(state.stage / 'resolved-parameters.json', parameters)
         write_json(state.stage / 'viewer.json', {**viewer, 'build_id': state.id})
+        if catalog_target.get() is not None:
+            metadata = {**metadata, 'catalog_target': catalog_target.get()}
         destination = state.complete({**metadata, 'viewer': 'viewer.json'})
         if promote:
             for alias in aliases:
