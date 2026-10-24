@@ -118,6 +118,8 @@ def run(port=3940, safe_graphics=False):
                 def fake_agent(args, **kwargs):
                     if 'exec' not in args or '--output-last-message' not in args:
                         return real_run(args, **kwargs)
+                    assert args[args.index('--model') + 1] == 'gpt-6.1-sol'
+                    assert args[args.index('-c') + 1] == 'model_reasoning_effort="low"'
                     received.append(kwargs)
                     Path(args[args.index('--output-last-message') + 1]).write_text('Test agent received the selected edge.')
                     return SimpleNamespace(returncode=0)
@@ -139,8 +141,8 @@ def run(port=3940, safe_graphics=False):
                 assert hashlib.sha256(actual).digest() == hashlib.sha256(original.read_bytes()).digest()
                 assert download.value.suggested_filename == 'module.stl'
                 page.locator('#file-search').fill('tall')
-                assert page.locator('.file-button').count() == 1
-                page.locator('.file-button').click()
+                assert page.locator('#files-list .file-button').count() == 1
+                page.locator('#files-list .file-button').click()
                 ready(page, 'alpha', second['id'])
                 assert page.locator('#copy-reference').is_disabled()
                 assert page.locator('#reference-text').input_value() == ''
@@ -222,8 +224,8 @@ def run(port=3940, safe_graphics=False):
                 newest.locator('.file-button').first.click()
                 assert 'file=build-2' in history_page.url
                 history_page.locator('#file-search').fill('Commit a')
-                assert history_page.locator('.file-button').count() == 1
-                assert history_page.locator('.file-button').is_visible()
+                assert history_page.locator('#files-list .file-button').count() == 1
+                assert history_page.locator('#files-list .file-button').is_visible()
                 history_page.locator('#file-search').fill('')
                 history_page.screenshot(path=str(output / 'commit-history.png'), full_page=True)
                 history_page.close()

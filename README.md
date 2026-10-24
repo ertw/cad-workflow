@@ -83,9 +83,11 @@ and your message. Codex may edit project files using a workspace-write sandbox;
 it is instructed to leave staging and committing to you. The reply appears in
 the panel. Requests are not automatically retried if the connection drops, because
 the agent may still be working. Review changes before resending. Only one geometry
-agent request runs at a time. This uses the same Codex CLI configuration as commit
-message drafting. In pinned/live previews, references can be copied but direct
-sending requires selecting a project from the catalog.
+agent request runs at a time. Geometry requests explicitly use `gpt-6.1-sol` with
+`low` reasoning effort (light), overriding personal model and effort defaults.
+They use the same Codex CLI and sign-in as commit message drafting. In pinned/live
+previews, references can be copied but direct sending requires selecting a project
+from the catalog.
 
 ### Stage and commit from the viewer
 

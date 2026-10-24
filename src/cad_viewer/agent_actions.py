@@ -49,6 +49,7 @@ class AgentActions:
                 try:
                     result = subprocess.run(
                         [os.environ.get('CAD_VIEWER_CODEX', 'codex'), 'exec',
+                         '--model', 'gpt-6.1-sol', '-c', 'model_reasoning_effort="low"',
                          '--sandbox', 'workspace-write', '--ephemeral',
                          '--output-last-message', str(output), '-'],
                         cwd=root, input=prompt, text=True, capture_output=True, timeout=1800)

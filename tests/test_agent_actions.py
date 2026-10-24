@@ -27,6 +27,8 @@ def test_agent_receives_reference_in_project_root(agent, monkeypatch):
     actions, request, root, calls = agent
     def run(args, **kw):
         assert kw['cwd'] == root  # Not the immutable build directory.
+        assert args[args.index('--model') + 1] == 'gpt-6.1-sol'
+        assert args[args.index('-c') + 1] == 'model_reasoning_effort="low"'
         assert args[args.index('--sandbox') + 1] == 'workspace-write'
         assert request['message'] in kw['input']
         assert '/part/edges/2' in kw['input']
