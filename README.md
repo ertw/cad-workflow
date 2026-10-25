@@ -64,7 +64,8 @@ Cyclone's existing viewer commands delegate to this application for compatibilit
 
 Click an edge or face to lock its reference in the **Agent reference** panel.
 Moving the pointer or orbiting the model does not replace it. Use **Alt+C** or
-**Copy reference** to copy it, or type a message and click **Send to Codex**.
+**Copy reference** to copy only the reference JSON, without headings, explanatory
+text, or a message template, or type a message and click **Send to Codex**.
 For example:
 “Please simplify the geometry around this edge while preserving the outer
 dimensions and mounting holes.” A screenshot alongside the reference helps

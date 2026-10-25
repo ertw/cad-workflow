@@ -97,11 +97,7 @@ function captureReference(picked) {
 async function copyReference() {
     if (!geometryReference) return;
     const capturedRevision = revision;
-    const value = "CAD geometry reference\n" + JSON.stringify(geometryReference, null, 2)
-        + "\nGeometry paths identify this displayed revision only; they may change after rebuilding. "
-        + "Coordinates and measurements describe the displayed tessellation (including view transforms), not exact B-rep geometry. "
-        + "The viewer URL opens the file but does not restore this selection or guarantee the same revision.\n"
-        + "Requested change: [describe what should improve and what must stay unchanged]";
+    const value = JSON.stringify(geometryReference, null, 2);
     const fallback = element("reference-text");
     fallback.value = value;
     try {

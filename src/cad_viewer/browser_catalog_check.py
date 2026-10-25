@@ -78,7 +78,7 @@ def run(port=3940, safe_graphics=False):
                 page.keyboard.press('Alt+c')
                 page.wait_for_function("document.querySelector('#reference-status').textContent.startsWith('Reference copied')")
                 copied = page.evaluate('navigator.clipboard.readText()')
-                reference = json.loads(copied.split('\n', 1)[1].split('\nGeometry paths', 1)[0])
+                reference = json.loads(copied)
                 assert reference['geometry_path'] == hovered
                 assert reference['revision'] == first['revision']
                 assert reference['project'] == 'alpha'
@@ -106,7 +106,7 @@ def run(port=3940, safe_graphics=False):
                 page.mouse.click(edge['x'], edge['y'])
                 page.wait_for_function("document.querySelector('#reference-status').textContent.startsWith('Captured edge:')")
                 page.locator('#copy-reference').click()
-                edge_reference = json.loads(page.locator('#reference-text').input_value().split('\n', 1)[1].split('\nGeometry paths', 1)[0])
+                edge_reference = json.loads(page.locator('#reference-text').input_value())
                 assert edge_reference['geometry_path'] == edge['path']
                 assert edge_reference['edge_endpoints'] and edge_reference['world_bounds']
                 # Pointer movement and orbiting must not overwrite the locked reference.
