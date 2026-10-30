@@ -1,6 +1,9 @@
 import { Viewer, Display, Timer } from "/static/js/three-cad-viewer.esm.js";
 import { createPage } from "/static/js/ocp-viewer-core/index.js";
 import { Comms } from "/static/js/comms.js";
+import { createToolDrawer } from "./tool-drawer.js";
+import { createFilletTool } from "./fillet-tool.js";
+import { commandRequest } from "./commands.js";
 
 const element = (id) => document.getElementById(id);
 const surface = element("cad_viewer");
@@ -33,6 +36,33 @@ let buildBusy = false;
 let buildOptionsKey = null;
 let buildOptionsVersion = 0;
 let modelUnits = null;
+let sourceModel = null;
+const filletTool = createFilletTool({
+    showPreview: model => displayFillet(model),
+    restore: () => displayFillet(sourceModel),
+    applied: async result => {
+        updateLocation(result.project, result.file);
+        await loadCatalog();
+    },
+    editOperation: async operation => {
+        const project = projects.find(item => item.id === operation.base.project);
+        const file = project?.files.find(item => item.id === operation.base.file && item.revision === operation.base.revision);
+        if (!file) throw new Error("The original build is unavailable. Refresh the project list.");
+        await chooseFile(project, file);
+        return activeAsset?.project === project.id && activeAsset?.file === file.id
+            && activeAsset?.revision === file.revision && surface.dataset.modelReady === "true";
+    },
+    onBusy: () => { updateAgentButton(); updateBuildButton(); },
+});
+const toolDrawer = createToolDrawer({
+    tools: [
+        { id: "export", label: "Export", aliases: "download print files stl step 3mf" },
+        { id: "agent-reference", label: "Agent reference", aliases: "codex copy reference" },
+        { id: "fillet", label: "Fillet", aliases: "round radius edge face" },
+    ],
+    getProjects: () => projects,
+    chooseProject: id => chooseProject(projects.find(project => project.id === id)),
+});
 const safeGraphics = new URLSearchParams(location.search).get("graphics") === "safe"
     || (/AppleWebKit/.test(navigator.userAgent) && !/Chrome|Chromium|Edg\/|OPR\/|Android/.test(navigator.userAgent));
 
@@ -53,7 +83,7 @@ function visitShapes(shape, callback) {
 
 // Snapshot only serializable data: upstream picked objects retain the renderer.
 function captureReference(picked) {
-    if (rendering || surface.dataset.modelReady !== "true") return;
+    if (rendering || filletTool.previewing || filletTool.busy || surface.dataset.modelReady !== "true") return;
     if (!picked?.backendId) return;
     const camera = cadViewer.getCameraLocationSettings();
     const key = JSON.stringify([picked.backendId, camera]);
@@ -88,6 +118,7 @@ function captureReference(picked) {
             ? [Array.from(positions.slice(0, 3)), Array.from(positions.slice(-3))] : null,
         camera,
     };
+    filletTool.select(geometryReference);
     element("reference-text").hidden = true;
     element("copy-reference").disabled = false;
     updateAgentButton();
@@ -95,7 +126,7 @@ function captureReference(picked) {
 }
 
 async function copyReference() {
-    if (!geometryReference) return;
+    if (!geometryReference || filletTool.previewing || filletTool.busy) return;
     const capturedRevision = revision;
     const value = JSON.stringify(geometryReference, null, 2);
     const fallback = element("reference-text");
@@ -150,7 +181,7 @@ function owner(path) {
 
 function downloadURL(part, format) {
     const value = part.downloads?.[format];
-    if (typeof value !== "string" || !activeBuild) return null;
+    if (typeof value !== "string" || !activeBuild || filletTool.previewing) return null;
     try {
         const url = new URL(value, location.origin);
         const assetPrefix = activeAsset
@@ -186,9 +217,10 @@ function selectPart(name, message = "Choose a component in the model or the part
         : null);
     const has3mf = setDownload("3mf", part);
     const hasStl = setDownload("stl", part);
+    setDownload("step", part);
     element("download-note").hidden = !(has3mf || hasStl);
-    text("download-note", activeAsset?.kind === "stl"
-        ? "Millimeters · full source file" : "Print orientation · millimeters · full component");
+    text("download-note", part?.kind === "model" ? "Model coordinates · millimeters"
+        : activeAsset?.kind === "stl" ? "Millimeters · full source file" : "Print orientation · millimeters · full component");
     element("clear-selection").hidden = !part;
     if (part) {
         text("print-status", has3mf
@@ -289,6 +321,8 @@ async function loadPrintFiles(build, expectedRevision) {
 
 function resetModel(message, metadata = null) {
     revision += 1;
+    sourceModel = null;
+    filletTool.setContext(null);
     geometryReference = null;
     referenceKey = null;
     referenceHighlight = null;
@@ -572,8 +606,8 @@ async function chooseFile(project, file, { replace = false, navigate = true } = 
     element("file-heading").hidden = !project;
     text("current-project", [project?.name, file?.group].filter(Boolean).join(" / "));
     text("current-file", file?.name || "No file selected");
-    document.title = file ? [file.name, file.group, project.name, "Workshop"].filter(Boolean).join(" · ")
-        : "Workshop · CAD & print files";
+    document.title = file ? [file.name, file.group, project.name, "CAD"].filter(Boolean).join(" · ")
+        : "CAD";
     if (!file) {
         sceneState("empty", project?.catalog_declared ? "No preview selected" : "No files yet",
             project?.catalog_declared ? "Select a part and build its preview, or open a saved build from history."
@@ -608,6 +642,7 @@ async function chooseFile(project, file, { replace = false, navigate = true } = 
         try {
             resetModel(payload.model, metadata);
             if (payload.model.config) payload.model.config.treeWidth = Math.min(payload.model.config.treeWidth || 240, 290);
+            sourceModel = structuredClone(payload.model);
             viewerPage.handleMessage(payload.model);
             if (!cadViewer?.ready) throw new Error("The model could not be displayed.");
             surface.dataset.modelReady = "true";
@@ -615,6 +650,7 @@ async function chooseFile(project, file, { replace = false, navigate = true } = 
         } finally {
             rendering = false;
         }
+        filletTool.setContext({ asset: activeAsset, capability: metadata.fillet });
         optionalText("preview-note", payload.model.preview?.simplified
             ? "Preview simplified for performance; downloads retain original detail." : null);
         sceneState(null);
@@ -645,7 +681,7 @@ function followLocation() {
         element("project-select").value = project?.id || "";
         element("file-search").disabled = !project;
         element("file-heading").hidden = true;
-        document.title = "File unavailable · Workshop";
+        document.title = "File unavailable · CAD";
         renderFiles();
         clearPreview();
         sceneState("error", project ? "File not found" : "Project not found",
@@ -699,6 +735,7 @@ async function loadCatalog() {
                 };
             }) };
         });
+        toolDrawer.refresh();
         const select = element("project-select");
         const placeholder = document.createElement("option");
         placeholder.value = "";
@@ -722,11 +759,13 @@ async function loadCatalog() {
     }
 }
 
-element("project-select").addEventListener("change", () => {
-    const project = projects.find((item) => item.id === element("project-select").value);
+function chooseProject(project) {
     if (!project) return;
     element("file-search").value = "";
     void chooseFile(project, defaultFile(project));
+}
+element("project-select").addEventListener("change", () => {
+    chooseProject(projects.find(item => item.id === element("project-select").value));
 });
 element("file-search").addEventListener("input", renderFiles);
 element("refresh-projects").addEventListener("click", () => loadCatalog());
@@ -793,7 +832,7 @@ class EmbeddedViewer extends Viewer {
             pointerDown = null;
             if (!down || event.button !== 0 || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey
                 || Math.hypot(event.clientX - down.x, event.clientY - down.y) > 4
-                || down.revision !== revision || rendering || surface.dataset.modelReady !== "true"
+                || down.revision !== revision || rendering || filletTool.previewing || filletTool.busy || surface.dataset.modelReady !== "true"
                 || down.camera !== JSON.stringify(this.getCameraLocationSettings())) return;
             const rect = canvas.getBoundingClientRect();
             const x = event.clientX - rect.left, y = event.clientY - rect.top;
@@ -926,21 +965,8 @@ let gitBusy = false;
 let gitVersion = 0;
 
 function gitCommand(action, payload = {}) {
-    const project = gitProject;
-    return new Promise((resolve, reject) => {
-        const socket = new WebSocket(`${location.protocol === "https:" ? "wss:" : "ws:"}//${location.host}/api/git`);
-        const timer = setTimeout(() => { socket.close(); reject(new Error("Request timed out. Refresh changes before retrying.")); }, 150000);
-        socket.onopen = () => socket.send(JSON.stringify({ project, action, ...payload }));
-        socket.onmessage = (event) => {
-            try {
-                const data = JSON.parse(event.data);
-                if (data.error) reject(new Error(data.error));
-                else resolve(data.result);
-            } catch (error) { reject(error); }
-            socket.close();
-        };
-        socket.onerror = () => reject(new Error("Could not connect to Git service."));
-        socket.onclose = () => { clearTimeout(timer); reject(new Error("Git connection closed. Refresh changes to check the result.")); };
+    return commandRequest("git", { project: gitProject, action, ...payload }, {
+        timeout: 150000, closed: "Git connection closed. Refresh changes to check the result.",
     });
 }
 function gitButtons() {
@@ -1021,12 +1047,12 @@ element("git-commit").addEventListener("click", () => runGit("commit"));
 element("git-message").addEventListener("input", gitButtons);
 
 function updateAgentButton() {
-    element("send-agent").disabled = agentBusy || buildBusy || !geometryReference?.project
+    element("send-agent").disabled = agentBusy || buildBusy || filletTool.busy || filletTool.previewing || !geometryReference?.project
         || !geometryReference?.file || !element("agent-message").value.trim();
 }
 element("agent-message").addEventListener("input", updateAgentButton);
 element("send-agent").addEventListener("click", async () => {
-    if (agentBusy || !geometryReference?.project) return;
+    if (element("send-agent").disabled) return;
     const message = element("agent-message").value.trim();
     if (!message) return;
     const reference = structuredClone(geometryReference);
@@ -1036,19 +1062,8 @@ element("send-agent").addEventListener("click", async () => {
     element("agent-reply").hidden = true;
     text("agent-status", `Codex is working on ${reference.project}: ${reference.geometry_path}…`);
     try {
-        const result = await new Promise((resolve, reject) => {
-            const socket = new WebSocket(`${location.protocol === "https:" ? "wss:" : "ws:"}//${location.host}/api/agent`);
-            socket.onopen = () => socket.send(JSON.stringify({ project: reference.project, message, reference }));
-            socket.onmessage = (event) => {
-                try {
-                    const data = JSON.parse(event.data);
-                    if (data.error) reject(new Error(data.error));
-                    else resolve(data.result);
-                } catch (error) { reject(error); }
-                socket.close();
-            };
-            socket.onerror = () => reject(new Error("Could not connect to the agent service."));
-            socket.onclose = () => reject(new Error("Agent connection closed. The task may still be running; review changes before resending."));
+        const result = await commandRequest("agent", { project: reference.project, message, reference }, {
+            closed: "Agent connection closed. The task may still be running; review changes before resending.",
         });
         text("agent-status", `Codex replied for ${reference.project}: ${reference.geometry_path}. Read the reply to check whether the requested change was completed.`);
         text("agent-reply", result.reply);
@@ -1065,24 +1080,12 @@ element("send-agent").addEventListener("click", async () => {
 });
 
 function buildRequest(action, payload, progress = () => {}) {
-    return new Promise((resolve, reject) => {
-        const socket = new WebSocket(`${location.protocol === "https:" ? "wss:" : "ws:"}//${location.host}/api/build`);
-        socket.onopen = () => socket.send(JSON.stringify({ action, ...payload }));
-        socket.onmessage = (event) => {
-            try {
-                const data = JSON.parse(event.data);
-                if (data.progress !== undefined) { progress(data.progress); return; }
-                if (data.error) reject(new Error(data.error));
-                else resolve(data.result);
-            } catch (error) { reject(error); }
-            socket.close();
-        };
-        socket.onerror = () => reject(new Error("Could not connect to the build service."));
-        socket.onclose = () => reject(new Error("Build connection closed. Refresh the file list to check for a completed build before retrying."));
+    return commandRequest("build", { action, ...payload }, { progress,
+        closed: "Build connection closed. Refresh the file list to check for a completed build before retrying.",
     });
 }
 function updateBuildButton() {
-    element("build-preview").disabled = buildBusy || agentBusy || !element("build-configuration").value;
+    element("build-preview").disabled = buildBusy || agentBusy || filletTool.busy || !element("build-configuration").value;
     element("build-configuration").disabled = buildBusy || !element("build-configuration").options.length;
 }
 async function syncBuildOptions(preserveStatus = false) {
@@ -1121,7 +1124,7 @@ element("build-configuration").addEventListener("change", () => {
     updateBuildButton();
 });
 element("build-preview").addEventListener("click", async () => {
-    if (buildBusy || agentBusy || !element("build-configuration").value) return;
+    if (buildBusy || agentBusy || filletTool.busy || !element("build-configuration").value) return;
     const payload = { project: currentProject.id, file: currentFile?.id, revision: currentFile?.revision,
         configuration: element("build-configuration").value };
     const originalSceneVersion = sceneVersion;
@@ -1156,3 +1159,21 @@ element("build-preview").addEventListener("click", async () => {
         if (currentProject?.id !== payload.project || currentFile?.id !== payload.file) void syncBuildOptions(true);
     }
 });
+
+function displayFillet(model) {
+    if (!model || !cadViewer?.ready) return;
+    rendering = true;
+    try {
+        const message = structuredClone(model);
+        if (message.config) message.config.treeWidth = Math.min(message.config.treeWidth || 240, 290);
+        viewerPage.handleMessage(message);
+        referenceHighlight = null;
+        cadViewer.update(true);
+    } finally { rendering = false; }
+    element("copy-reference").disabled = filletTool.previewing || !geometryReference;
+    selectPart(parts.size === 1 ? parts.keys().next().value : null,
+        filletTool.previewing ? "Apply the fillet to export it." : undefined);
+    updateAgentButton();
+    optionalText("preview-note", filletTool.previewing ? "Fillet preview" : null);
+    requestAnimationFrame(() => viewerPage.resize());
+}

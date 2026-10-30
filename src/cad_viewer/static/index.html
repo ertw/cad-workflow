@@ -3,17 +3,13 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Workshop · CAD & print files</title>
+    <title>CAD</title>
     <link rel="icon" href="/static/icon/ocp-eye.png">
     <link rel="stylesheet" href="/static/css/three-cad-viewer.css">
     <link rel="stylesheet" href="/app/viewer.css">
     <script type="module" src="/app/viewer.js"></script>
   </head>
   <body>
-    <header class="app-header">
-      <div><p class="eyebrow">CAD / WORKSHOP</p><h1>Explore a project. Print a part.</h1></div>
-      <div class="build"><span class="eyebrow">DISPLAYED REVISION</span><code id="build-id">Waiting for a model</code></div>
-    </header>
     <main class="workspace">
       <aside id="project-panel" class="project-panel" aria-label="Projects and files" hidden>
         <div class="project-controls">
@@ -69,28 +65,41 @@
         <p class="viewer-help">Double-click a component in the model or select its name in the tree to see its print files.</p>
         <p id="viewer-error" class="error" role="alert" hidden></p>
       </section>
-      <aside class="print-panel" aria-label="Component print files">
+      <aside id="tool-drawer" class="tool-drawer" aria-label="Tools" data-tool="export">
+        <div class="tool-launcher">
+          <button id="tool-toggle" type="button" aria-label="Collapse tools" aria-expanded="true" aria-controls="tool-content">›</button>
+          <div class="tool-search-wrap">
+            <input id="tool-search" type="text" role="combobox" aria-label="Search tools and projects" aria-expanded="false" aria-controls="tool-results" aria-autocomplete="list" autocomplete="off" spellcheck="false" placeholder="Search tools and projects" autofocus>
+            <kbd aria-hidden="true">⌘K</kbd>
+          </div>
+          <div id="tool-results" role="listbox" aria-label="Tools and projects" hidden></div>
+        </div>
+        <div id="tool-content" class="tool-content">
+        <div id="tool-agent-reference" class="tool-pane" hidden>
         <section class="geometry-reference" aria-label="Agent reference">
-          <p class="eyebrow">AGENT REFERENCE</p>
+          <h2>Agent reference</h2>
           <button id="copy-reference" class="retry" type="button" disabled>Copy reference</button>
-          <p class="muted">Click an edge to capture it. The reference stays selected while you write. Alt+C copies the captured reference.</p>
+          <p class="muted">Select an edge or face. Alt+C copies the reference.</p>
           <p id="reference-status" role="status">Click an edge or face to capture a reference.</p>
           <label for="agent-message">Message to Codex</label>
-          <textarea id="agent-message" rows="4" maxlength="20000" placeholder="Describe the change you want…"></textarea>
+          <textarea id="agent-message" rows="4" maxlength="20000" placeholder="Describe the change"></textarea>
           <p class="muted">Codex can edit files in this project. Review its changes before committing.</p>
           <button id="send-agent" class="retry" type="button" disabled>Send to Codex</button>
           <p id="agent-status" role="status"></p>
           <pre id="agent-reply" aria-label="Agent reply" hidden></pre>
           <textarea id="reference-text" aria-label="Geometry reference to copy" readonly hidden></textarea>
         </section>
+        </div>
+        <div id="tool-export" class="tool-pane">
         <section class="selection" aria-labelledby="selected-component">
-          <p class="eyebrow">PRINT FILES</p>
+          <p class="eyebrow">EXPORT</p>
           <h2 id="selected-component">Select a component</h2>
           <p id="print-status" role="status">Waiting for a model from the CAD workspace.</p>
           <p id="print-note" hidden></p>
           <p id="print-dimensions" class="muted" hidden></p>
           <div class="download-actions">
             <a id="download-3mf" class="download primary" hidden download>Download 3MF <span aria-hidden="true">↓</span></a>
+            <a id="download-step" class="download secondary" hidden download>Download STEP <span aria-hidden="true">↓</span></a>
             <a id="download-stl" class="download secondary" hidden download>Download STL <span aria-hidden="true">↓</span></a>
           </div>
           <p id="download-note" class="muted" hidden>Print orientation · millimeters · full component</p>
@@ -102,6 +111,24 @@
           <ul id="parts-list" aria-label="Select a printable part"></ul>
         </section>
         <p id="build-status" class="build-status" hidden></p>
+        <div class="build"><span class="eyebrow">REVISION</span><code id="build-id">Waiting for a model</code></div>
+        </div>
+        <section id="tool-fillet" class="tool-pane tool-form" aria-label="Fillet" hidden>
+          <h2>Fillet</h2>
+          <button id="fillet-edit" class="retry" type="button" hidden>Edit saved fillet</button>
+          <p id="fillet-selection" class="muted">Select an edge or face.</p>
+          <form id="fillet-form">
+            <label for="fillet-radius">Radius (mm)</label>
+            <input id="fillet-radius" type="number" min="0" max="10000" step="any" value="1" required>
+            <div class="tool-actions">
+              <button id="fillet-preview" type="submit" disabled>Preview</button>
+              <button id="fillet-apply" type="button" disabled>Apply</button>
+              <button id="fillet-cancel" type="button" hidden>Cancel</button>
+            </div>
+          </form>
+          <p id="fillet-status" role="status"></p>
+        </section>
+        </div>
       </aside>
     </main>
     <noscript>This viewer requires JavaScript to display the model and its print files.</noscript>

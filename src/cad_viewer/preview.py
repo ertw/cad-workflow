@@ -46,6 +46,8 @@ def server(port=3939, build_path=None, workspace=None):
     build_actions = BuildActions(catalog, agent_actions.lock) if catalog else None
     from .git_actions import GitActions
     git_actions = GitActions(catalog) if catalog else None
+    from .fillet_actions import FilletActions
+    fillet_actions = FilletActions(catalog, agent_actions.lock) if catalog else None
     def handle_socket(ws):
         if ws.request.path == '/api/build' and build_actions:
             build_actions.handle(ws)
@@ -53,6 +55,8 @@ def server(port=3939, build_path=None, workspace=None):
             agent_actions.handle(ws)
         elif ws.request.path == '/api/git' and git_actions:
             git_actions.handle(ws)
+        elif ws.request.path == '/api/fillet' and fillet_actions:
+            fillet_actions.handle(ws)
         else:
             handle(viewer, ws)
     logging.getLogger('websockets.server').addFilter(_NotAProbe())

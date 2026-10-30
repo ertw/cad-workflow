@@ -304,7 +304,7 @@ class ProjectCatalog:
                 'latest_parts': self.latest_parts(project_id)}
 
     def download(self, project_id, file_id, revision, format, filename=None):
-        if not revision or format not in ('stl', '3mf'):
+        if not revision or format not in ('stl', '3mf', 'step'):
             raise FileNotFoundError('Unknown download')
         entry = self.resolve(project_id, file_id, revision)
         if entry.kind == 'assembly' and filename is not None:
@@ -387,6 +387,8 @@ class ProjectCatalog:
                 name = presets.get(manifest.get('input_file_hash'))
                 name = name.replace('_', ' ').replace('-', ' ').title() if name else (
                     'Assembly' if configuration == 'default' else f'Configuration {configuration[:8]}')
+                if manifest.get('operation') == 'operation.json':
+                    name = manifest.get('name') or name
                 provenance = _provenance(manifest)
                 entry = CatalogEntry('cyclone', 'build-' + candidate.name,
                                      name, 'Configurations', 'assembly', candidate.name, path,

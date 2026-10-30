@@ -44,6 +44,35 @@ The shared [build library](docs/builds.md) writes `cad-build-v1` manifests for b
 
 Safari uses reduced graphics settings to limit GPU memory use. A lost WebGL context stops automatic recovery and displays an explicit reload message. The `?graphics=safe` query option enables the same profile in other browsers.
 
+### Tools
+
+The right drawer displays one tool at a time: **Export**, **Agent reference**, or
+**Fillet**. Press **Command+K** (or **Ctrl+K**) to expand the drawer and search tools
+and projects. The current tool name is selected, so **Enter** returns to it and
+typing starts a new fuzzy search. Use **Up/Down** to choose a result, **Enter** to
+open it, and **Escape** to close the results. Selecting a project changes the
+displayed project while keeping the current tool. The search stays above the tool
+pane without moving its contents when results open.
+
+**Export** contains the selected component's downloadable files, printable parts,
+and displayed revision. **Agent reference** captures a selected edge or face for
+copying or sending to Codex.
+
+For **Fillet**, select an edge or a face in a saved native model, enter a radius
+in millimeters, and choose **Preview**. A face selects its boundary edges. After
+changing the radius, preview again. Use **Cancel** to restore the displayed build
+or **Apply** to save the edited component as a new checked build. Fillets run locally
+through the CAD engine. Mesh-only files cannot be filleted.
+Open a saved result and choose **Edit saved fillet** to change its radius using
+the recorded selection and original source model.
+
+The new build records the source revision, selection and radius in
+`operation.json`, and checks the solid, STEP round-trip and watertight STL. It
+contains the edited component in model coordinates; select print orientation
+and supports before printing. Other components and existing build pointers are
+preserved. A selection belongs to its displayed revision; changes to the source
+model require selecting the intended geometry again.
+
 ## Checks
 
 ```sh
@@ -52,7 +81,7 @@ nix develop path:. -c just browser-check
 nix develop path:. -c just browser-check-safe
 ```
 
-The browser checks use the pinned Chromium executable and temporary exported fixtures, covering project/file selection, separate tabs, history, downloads, empty/error states, and graphics-context loss. They do not rebuild Cyclone geometry. Check reports and screenshots are written under `out/`.
+The browser checks use the pinned Chromium executable and temporary exported fixtures, covering tool search and keyboard navigation, desktop/mobile drawer layout, native fillet preview/apply, project/file selection, separate tabs, history, downloads, empty/error states, and graphics-context loss. They do not rebuild Cyclone geometry. Check reports and screenshots are written under `out/`.
 
 The extracted environment retains the existing dependency versions: Python 3.12, build123d 0.13.0, cadquery-ocp-novtk 8.0.1.1.0, ocp-viewer 1.1.3, ocp-viewer-core 1.0.13, trimesh 4.12.2, numpy 2.5.3, websockets 17.2, pytest 9.0.2, and Playwright 1.58.0. Shell entry never installs dependencies; `just setup` installs the lock explicitly.
 
@@ -62,7 +91,7 @@ Cyclone's existing viewer commands delegate to this application for compatibilit
 
 ### Sharing geometry with an agent
 
-Click an edge or face to lock its reference in the **Agent reference** panel.
+Open **Agent reference**, then click an edge or face to lock its reference.
 Moving the pointer or orbiting the model does not replace it. Use **Alt+C** or
 **Copy reference** to copy only the reference JSON, without headings, explanatory
 text, or a message template, or type a message and click **Send to Codex**.

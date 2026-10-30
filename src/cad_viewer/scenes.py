@@ -33,10 +33,15 @@ class _Capture(Comms):
     def send_data(self, data, timeit=False):
         return data
 
+    def __init__(self, capture_topology=False):
+        self.capture_topology = capture_topology
+        self.topology = None
+
     def send_backend(self, data, timeit=False):
         # The static preview has no shared measurement backend. Keeping these
         # OCCT objects would retain the complete CAD model after serialization.
-        pass
+        if self.capture_topology:
+            self.topology = data['model']
 
 
 def _options():
@@ -198,14 +203,25 @@ def _mesh_message(entry, data):
     return message
 
 
+def native_scene(shape, label, *, capture_topology=False):
+    """Use one conversion path for displayed geometry and exact edit selection.
+
+    Callers hold ``_CAD_LOCK``. The optional topology lives only for the request;
+    the ordinary scene cache continues to retain serialized bytes only.
+    """
+    capture = _Capture(capture_topology)
+    message = Viewer(Config(Session(capture), ())).show(
+        shape, names=[label], progress='', **_options())
+    if not isinstance(message, dict):
+        raise ValueError('CAD scene could not be serialized')
+    return message, capture.topology
+
+
 def _render(entry):
     if entry.source_kind == 'cyclone':
         from .assembly import viewer_assembly
         shape, label = viewer_assembly(entry.source_path)
-        message = Viewer(Config(Session(_Capture()), ())).show(
-            shape, names=[label], progress='', **_options())
-        if not isinstance(message, dict):
-            raise ValueError('CAD scene could not be serialized')
+        message, _ = native_scene(shape, label)
         message['build_id'] = entry.build_id
     elif entry.source_kind == 'stl':
         if Path(entry.source_path).stat().st_size > MAX_STL_BYTES:

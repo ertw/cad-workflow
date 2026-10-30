@@ -163,7 +163,7 @@ def test_current_project_working_tree(tmp_path):
     assert status().headers['Cache-Control'] == 'no-store'
 
 
-@pytest.mark.parametrize("endpoint", ["/api/git", "/api/agent", "/api/build"])
+@pytest.mark.parametrize("endpoint", ["/api/git", "/api/agent", "/api/build", "/api/fillet"])
 def test_command_socket_requires_same_origin(endpoint):
     for origin, expected in [('https://evil.example', 403), ('', 403), ('http://localhost:3939', None)]:
         response = respond(None, SimpleNamespace(path=endpoint, headers=Headers({

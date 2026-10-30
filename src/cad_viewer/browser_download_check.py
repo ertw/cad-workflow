@@ -7,6 +7,8 @@ import re
 from urllib.parse import unquote, urlparse
 import zipfile
 
+from .browser_tools_check import select_tool
+
 
 def _selected(page, name):
     page.wait_for_function(
@@ -120,6 +122,7 @@ def browser_download_check(page, build_path, reload_model=None):
     )
     if page.locator('iframe').count():
         raise RuntimeError('CAD viewer must be directly embedded, without an iframe')
+    select_tool(page, 'export', 'export')
     _cleared(page)
 
     # Use an actually rendered native tree label so --part and cutaway views also

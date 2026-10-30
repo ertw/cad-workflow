@@ -11,6 +11,7 @@ from tempfile import TemporaryDirectory
 
 from playwright.sync_api import sync_playwright
 
+from .browser_tools_check import check_mobile_tool_launcher, check_tool_launcher, edge_target, select_tool
 from .preview import server
 
 
@@ -63,16 +64,18 @@ def run(port=3940, safe_graphics=False):
                     assert page.evaluate('cadViewer.renderer.getContext().getContextAttributes().antialias') is False
                 assert page.locator('#cad_viewer canvas').first.is_visible()
                 assert page.locator('#selected-component').inner_text() == 'module.stl'
+                check_tool_launcher(page, projects, output)
+                ready(page, 'alpha', first['id'])
+                select_tool(page, 'agent reference', 'agent-reference')
                 # Hover alone must not capture. A click retains the GPU-picked geometry.
                 context.grant_permissions(['clipboard-read', 'clipboard-write'])
                 assert page.locator('#copy-reference').is_disabled()
                 canvas = page.locator('#cad_viewer canvas').first.bounding_box()
-                page.mouse.move(canvas['x'] + canvas['width'] * .55,
-                                canvas['y'] + canvas['height'] * .5)
+                edge = edge_target(page)
+                page.mouse.move(edge['x'], edge['y'])
                 page.wait_for_function('Boolean(cadViewer.lastObject)')
                 assert page.locator('#copy-reference').is_disabled()
-                page.mouse.click(canvas['x'] + canvas['width'] * .55,
-                                 canvas['y'] + canvas['height'] * .5)
+                page.mouse.click(edge['x'], edge['y'])
                 page.wait_for_function("!document.querySelector('#copy-reference').disabled")
                 hovered = page.evaluate('cadViewer.lastObject.backendId')
                 page.keyboard.press('Alt+c')
@@ -91,21 +94,6 @@ def run(port=3940, safe_graphics=False):
                 page.locator('#reference-text').wait_for(state='visible')
                 assert page.locator('#reference-text').input_value() == copied
 
-                # Find a real GPU-pickable edge, then click its exact pixel.
-                edge = page.evaluate("""() => {
-                    const rect = cadViewer.renderer.domElement.getBoundingClientRect();
-                    for (let y = 10; y < rect.height - 10; y += 5) {
-                        for (let x = 10; x < rect.width - 10; x += 5) {
-                            const hit = cadViewer.idPicker.pickAt(x, y);
-                            if (hit?.info.topo === 'edge') return {x: rect.x + x, y: rect.y + y, path: hit.info.path};
-                        }
-                    }
-                    return null;
-                }""")
-                assert edge, 'No pickable edge in the box fixture'
-                page.mouse.click(edge['x'], edge['y'])
-                page.wait_for_function("document.querySelector('#reference-status').textContent.startsWith('Captured edge:')")
-                page.locator('#copy-reference').click()
                 edge_reference = json.loads(page.locator('#reference-text').input_value())
                 assert edge_reference['geometry_path'] == edge['path']
                 assert edge_reference['edge_endpoints'] and edge_reference['world_bounds']
@@ -134,6 +122,7 @@ def run(port=3940, safe_graphics=False):
                 assert page.locator('#agent-reply').inner_text() == 'Test agent received the selected edge.'
                 assert page.locator('#agent-message').input_value() == 'Round only this edge'
 
+                select_tool(page, 'export', 'export')
                 with page.expect_download() as download:
                     page.locator('#download-stl').click()
                 actual = Path(download.value.path()).read_bytes()
@@ -191,6 +180,7 @@ def run(port=3940, safe_graphics=False):
                 ready(page, 'alpha', first['id'])
                 page.screenshot(path=str(output / 'desktop.png'))
                 page.set_viewport_size({'width': 390, 'height': 844})
+                check_mobile_tool_launcher(page, output)
                 page.screenshot(path=str(output / 'mobile.png'), full_page=True)
                 assert page.evaluate('document.documentElement.scrollWidth <= innerWidth')
                 page.evaluate("cadViewer.renderer.getContext().getExtension('WEBGL_lose_context').loseContext()")
@@ -238,7 +228,9 @@ def run(port=3940, safe_graphics=False):
                                      'graphics context loss stops retries', 'commit groups and build order',
                                      'unlinked builds', 'commit search and selection',
                                      'click reference shortcut and button', 'edge click and agent message', 'clipboard fallback',
-                                     'reference cleared on file change']}
+                                     'reference cleared on file change', 'tool keyboard navigation and recall',
+                                     'tool and project fuzzy search', 'tool drawer without panel reflow',
+                                     'mobile tool selection']}
                 (output / 'report.json').write_text(json.dumps(result, indent=2) + '\n')
                 print(json.dumps(result, indent=2))
             except Exception:
@@ -247,6 +239,8 @@ def run(port=3940, safe_graphics=False):
                 raise
             finally:
                 browser.close()
+    from .browser_fillet_check import run as check_fillet
+    check_fillet(port, safe_graphics, output / 'fillet')
     return output
 
 

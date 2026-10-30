@@ -58,7 +58,7 @@ class BuildFiles:
             if not PART_NAME.fullmatch(name):
                 continue
             downloads = {}
-            for fmt in ('3mf', 'stl'):
+            for fmt in ('3mf', 'stl', 'step'):
                 relative = f'{fmt}/{name}.{fmt}'
                 if relative in manifest['checksums']:
                     downloads[fmt] = f'/downloads/{build_id}/{relative}'
@@ -71,7 +71,7 @@ class BuildFiles:
                 'status': manifest['status'], 'parts': parts}
 
     def download(self, build_id, fmt, filename):
-        if fmt not in ('3mf', 'stl') or not filename.endswith('.' + fmt):
+        if fmt not in ('3mf', 'stl', 'step') or not filename.endswith('.' + fmt):
             raise FileNotFoundError('Unknown format')
         name = filename[:-(len(fmt) + 1)]
         if not PART_NAME.fullmatch(name):
@@ -84,7 +84,7 @@ class BuildFiles:
 
 def respond(viewer, request, files, catalog=None):
     if request.headers.get('Upgrade', '').lower() == 'websocket':
-        if urlsplit(request.path).path in ('/api/git', '/api/agent', '/api/build'):
+        if urlsplit(request.path).path in ('/api/git', '/api/agent', '/api/build', '/api/fillet'):
             origin = urlsplit(request.headers.get('Origin', ''))
             if (catalog is None or origin.scheme not in ('http', 'https')
                     or origin.netloc != request.headers.get('Host')):
@@ -153,7 +153,7 @@ def respond(viewer, request, files, catalog=None):
                 raise FileNotFoundError('Unknown download')
             _, _, build_id, fmt, filename = segments
             data = files.download(build_id, fmt, filename)
-            return _response(HTTPStatus.OK, data, 'model/3mf' if fmt == '3mf' else 'model/stl', {
+            return _response(HTTPStatus.OK, data, 'model/' + fmt, {
                 'Content-Disposition': f'attachment; filename="{filename}"',
                 'Cache-Control': 'private, max-age=31536000, immutable',
                 'X-Content-Type-Options': 'nosniff',
@@ -167,6 +167,7 @@ def respond(viewer, request, files, catalog=None):
 
 
 def _file_metadata(entry, files):
+    from .fillet_actions import capabilities
     if entry.kind == 'assembly':
         metadata = BuildFiles(entry.path.parent, entry.path).metadata(entry.build_id)
         for part in metadata['parts']:
@@ -185,7 +186,7 @@ def _file_metadata(entry, files):
             }],
         }
     return {**metadata, 'project_id': entry.project_id, 'file_id': entry.id,
-            'revision': entry.revision}
+            'revision': entry.revision, 'fillet': capabilities(entry)}
 
 
 def _json(data, status=HTTPStatus.OK):
